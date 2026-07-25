@@ -1,0 +1,742 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { Header } from './components/Header';
+import { StatsOverview } from './components/StatsOverview';
+import { ContractUploader } from './components/ContractUploader';
+import { SpreadsheetTable } from './components/SpreadsheetTable';
+import { DashboardView } from './components/DashboardView';
+import { EmailModal } from './components/EmailModal';
+import { GoogleSheetsModal } from './components/GoogleSheetsModal';
+import { NotificationCenter } from './components/NotificationCenter';
+import { RecordModal } from './components/RecordModal';
+import { initialRecords } from './data/initialRecords';
+import { CommissionRecord, ContractAnalysisResult, AppNotification, EmailSettings, GoogleSheetSettings } from './types';
+import { Sparkles, CheckCircle2, AlertTriangle, FileSpreadsheet, ExternalLink, RefreshCw, Trash2, LayoutDashboard, FileText } from 'lucide-react';
+import { initAuth, getCachedAccessToken } from './lib/googleAuth';
+import { getRecordYear } from './utils/dateUtils';
+import { normalizeRecordsClubeAtleta } from './utils/athleteUtils';
+
+const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
+const STORAGE_KEY_EMAIL = 'app_email_settings_v1';
+const STORAGE_KEY_SHEETS = 'app_sheets_settings_v1';
+
+// Deduplication helper to prevent duplicate parcelas/records
+export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionRecord[] => {
+  const seenKeys = new Set<string>();
+  const result: CommissionRecord[] = [];
+
+  for (const rec of recordsList) {
+    const normContrato = (rec.numeroContrato || '').split('(')[0].trim().toLowerCase();
+    const normCliente = (rec.clienteNome || '').trim().toLowerCase();
+    const normClube = (rec.clube || '').trim().toLowerCase();
+    const normAtleta = (rec.atleta || '').trim().toLowerCase();
+    const normParcela = `${rec.parcelaAtual || 1}/${rec.totalParcelas || 1}`;
+
+    // Unique signature for installment
+    const key = normContrato && normContrato.length > 3
+      ? `${normContrato}_p${normParcela}`
+      : `${normCliente}_${normClube}_${normAtleta}_p${normParcela}`;
+
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      result.push(rec);
+    }
+  }
+
+  return result;
+};
+
+export default function App() {
+  // Load initial state or localStorage
+  const [records, setRecords] = useState<CommissionRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_RECORDS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return normalizeRecordsClubeAtleta(deduplicateRecords(parsed));
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return normalizeRecordsClubeAtleta(deduplicateRecords(initialRecords));
+  });
+
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_EMAIL);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return {
+      userEmail: 'marcio@marciobittencourt.com.br, gustavo@marciobittencourt.com.br',
+      senderEmail: 'gustavo@marciobittencourt.com.br',
+      recipientEmails: 'marcio@marciobittencourt.com.br, gustavo@marciobittencourt.com.br',
+      enableMonthlyCron: true,
+      autoSendOnUpload: true,
+      notifyOnDueDates: true,
+      daysBeforeNotification: 3,
+      smtpConfigured: true
+    };
+  });
+
+  const [sheetSettings, setSheetSettings] = useState<GoogleSheetSettings>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_SHEETS);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error(e);
+    }
+    return {
+      spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4/edit?pli=1&gid=0#gid=0',
+      spreadsheetId: '1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4',
+      sheetName: 'Página1',
+      autoSyncOnUpload: true,
+      isConnected: true,
+      lastSyncedAt: new Date().toISOString()
+    };
+  });
+
+  const [notifications, setNotifications] = useState<AppNotification[]>([
+    {
+      id: 'notif-1',
+      titulo: 'NF Pendente de Emissão',
+      mensagem: 'O contrato CT-2026/089 (Nexus Tecnologia) vence em 28/07 e requer emissão de Nota Fiscal.',
+      tipo: 'vencimento',
+      data: 'Hoje 09:30',
+      lida: false
+    },
+    {
+      id: 'notif-2',
+      titulo: 'Comissão Liquidada',
+      mensagem: 'Comissão de R$ 10.200,00 da Vanguard Engenharia foi quitada.',
+      tipo: 'sucesso',
+      data: '15/07/2026',
+      lida: true
+    }
+  ]);
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // Main Division Tab state ('inclusao' = PDF + Planilha, 'dashboard' = Visual Dashboard)
+  const [mainAppTab, setMainAppTab] = useState<'inclusao' | 'dashboard'>('inclusao');
+
+  // Dashboard Year & Status Filter states
+  const [selectedYear, setSelectedYear] = useState<string>('ALL');
+  const [dashboardTab, setDashboardTab] = useState<'all' | 'nao_emitida' | 'fora_prazo' | 'emitida' | 'nao_autorizada' | 'pago'>('all');
+
+  const handleNavigateToTable = (statusFilter?: 'all' | 'nao_emitida' | 'fora_prazo' | 'emitida' | 'nao_autorizada' | 'pago') => {
+    if (statusFilter) {
+      setDashboardTab(statusFilter);
+    }
+    setMainAppTab('inclusao');
+  };
+
+  // Dynamically compute available years from commission records
+  const availableYears = useMemo(() => {
+    const yearsSet = new Set<string>();
+    records.forEach(rec => {
+      const yr = getRecordYear(rec);
+      if (yr && yr !== 'Outros') {
+        yearsSet.add(yr);
+      }
+    });
+    const currentY = new Date().getFullYear().toString();
+    yearsSet.add(currentY);
+    yearsSet.add("2026");
+    return Array.from(yearsSet).sort((a, b) => b.localeCompare(a));
+  }, [records]);
+
+  // Modal states
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
+  const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState<CommissionRecord | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<CommissionRecord | null>(null);
+  const [isSheetsSyncing, setIsSheetsSyncing] = useState(false);
+
+  // Sync records to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_RECORDS, JSON.stringify(records));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [records]);
+
+  // Sync emailSettings to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_EMAIL, JSON.stringify(emailSettings));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [emailSettings]);
+
+  // Sync sheetSettings to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_SHEETS, JSON.stringify(sheetSettings));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [sheetSettings]);
+
+  // Initialize Auth listener & auto-import
+  useEffect(() => {
+    const unsubscribe = initAuth((_user, token) => {
+      setSheetSettings(prev => ({ ...prev, accessToken: token, isConnected: true }));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Auto-import records from Google Sheets on initial load
+  useEffect(() => {
+    if (sheetSettings.spreadsheetId) {
+      handleImportFromSheets().catch(err => {
+        console.warn('Auto-import do Google Sheets ao iniciar:', err);
+      });
+    }
+  }, [sheetSettings.spreadsheetId]);
+
+  const showToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4500);
+  };
+
+  // Google Sheets Sync handler
+  const handleSyncToSheets = async (targetRecords?: CommissionRecord[]) => {
+    setIsSheetsSyncing(true);
+    try {
+      const recordsToSync = targetRecords || records;
+      const activeToken = sheetSettings.accessToken || getCachedAccessToken();
+      const res = await fetch('/api/sheets/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spreadsheetId: sheetSettings.spreadsheetId,
+          sheetName: sheetSettings.sheetName,
+          webAppUrl: sheetSettings.webAppUrl,
+          accessToken: activeToken,
+          records: recordsToSync
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || data.details || 'Falha ao sincronizar com Google Sheets');
+      }
+
+      setSheetSettings(prev => ({
+        ...prev,
+        lastSyncedAt: new Date().toISOString(),
+        isConnected: true
+      }));
+
+      if (data.simulated) {
+        console.log("Inclusão salva no app.");
+      } else {
+        showToast(`Google Sheets atualizado em tempo real (${recordsToSync.length} comissões)!`, 'success');
+      }
+    } catch (err: any) {
+      console.error("Erro ao sincronizar com Google Sheets:", err);
+      showToast(`Atenção ao alimentar Google Sheets: ${err.message || 'Verifique o link'}`, 'info');
+    } finally {
+      setIsSheetsSyncing(false);
+    }
+  };
+
+  // Google Sheets Import handler (merges with local PDF records)
+  const handleImportFromSheets = async () => {
+    setIsSheetsSyncing(true);
+    try {
+      const res = await fetch('/api/sheets/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          spreadsheetId: sheetSettings.spreadsheetId
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Falha ao ler dados da planilha do Google Sheets');
+      }
+
+      if (data.records && data.records.length > 0) {
+        setRecords(prev => {
+          const merged = deduplicateRecords([...prev, ...data.records]);
+          return merged;
+        });
+        showToast(`${data.records.length} comissões carregadas do Google Sheets!`, 'success');
+      } else {
+        showToast('Nenhum registro encontrado na planilha do Google Sheets.', 'info');
+      }
+    } catch (err: any) {
+      console.error("Erro ao importar do Google Sheets:", err);
+      showToast(`Aviso: ${err.message}`, 'info');
+    } finally {
+      setIsSheetsSyncing(false);
+    }
+  };
+
+  // Manual Deduplication handler
+  const handleDeduplicateRecords = () => {
+    const beforeCount = records.length;
+    const cleaned = deduplicateRecords(records);
+    const removedCount = beforeCount - cleaned.length;
+    setRecords(cleaned);
+    if (removedCount > 0) {
+      showToast(`Removidas ${removedCount} parcela(s) duplicada(s) com sucesso!`, 'success');
+      if (sheetSettings.spreadsheetId) {
+        handleSyncToSheets(cleaned).catch(e => console.warn('Sync notice:', e));
+      }
+    } else {
+      showToast('Nenhuma parcela duplicada encontrada na planilha.', 'info');
+    }
+  };
+
+  // Manual Separation of Clube and Atleta handler
+  const handleSeparateAtletas = () => {
+    const beforeStr = JSON.stringify(records);
+    const cleaned = normalizeRecordsClubeAtleta(records);
+    const afterStr = JSON.stringify(cleaned);
+
+    setRecords(cleaned);
+    if (beforeStr !== afterStr) {
+      showToast('✨ Atletas colados no clube foram organizados para a coluna Atleta!', 'success');
+      if (sheetSettings.spreadsheetId) {
+        handleSyncToSheets(cleaned).catch(e => console.warn('Sync notice:', e));
+      }
+    } else {
+      showToast('Todos os atletas já estão organizados na coluna de Atleta.', 'info');
+    }
+  };
+
+  // Callback when PDF is parsed by Gemini AI
+  const handleContractExtracted = async (extracted: ContractAnalysisResult, filename: string) => {
+    const newRecordsCreated: CommissionRecord[] = [];
+    const baseContratoNo = extracted.numeroContrato || `CT-2026/${Math.floor(100 + Math.random() * 900)}`;
+    const baseCliente = extracted.clienteNome || 'Cliente Não Identificado';
+    const totalParcelas = extracted.parcelas?.length || extracted.numeroParcelas || 1;
+
+    if (extracted.parcelas && extracted.parcelas.length > 1) {
+      extracted.parcelas.forEach((p, idx) => {
+        newRecordsCreated.push({
+          id: `rec-${Date.now()}-${idx + 1}`,
+          numeroContrato: `${baseContratoNo} (${p.numeroParcela}/${totalParcelas})`,
+          clienteNome: baseCliente,
+          clube: extracted.clube || baseCliente,
+          atleta: extracted.atleta || '-',
+          tipoContrato: extracted.tipoContrato || 'Intermediação Comercial',
+          dataContrato: extracted.dataContrato || new Date().toISOString().split('T')[0],
+          numeroNF: extracted.numeroNF || '',
+          clienteCnpjCpf: extracted.clienteCnpjCpf || '',
+          servicoDescricao: `${extracted.servicoDescricao || 'Serviço de Intermediação Comercial'} - Parcela ${p.numeroParcela}/${totalParcelas}`,
+          valorBaseContrato: extracted.valorBaseContrato ? Math.round((extracted.valorBaseContrato / totalParcelas) * 100) / 100 : 0,
+          percentualComissao: extracted.percentualComissao || 10,
+          valorComissao: p.valorParcela,
+          dataVencimentoNF: p.dataVencimento,
+          statusNF: 'Não emitida',
+          statusPagamento: 'Aguardando',
+          pagoOuNao: 'Não pago',
+          observacoes: extracted.observacoes || p.descricao || `Contrato parcelado em ${totalParcelas}x (Arquivo: ${filename})`,
+          criadoEm: new Date().toISOString(),
+          pdfNomeArquivo: filename,
+          parcelaAtual: p.numeroParcela,
+          totalParcelas: totalParcelas
+        });
+      });
+    } else {
+      newRecordsCreated.push({
+        id: `rec-${Date.now()}`,
+        numeroContrato: baseContratoNo,
+        clienteNome: baseCliente,
+        clube: extracted.clube || baseCliente,
+        atleta: extracted.atleta || '-',
+        tipoContrato: extracted.tipoContrato || 'Intermediação Comercial',
+        dataContrato: extracted.dataContrato || new Date().toISOString().split('T')[0],
+        numeroNF: extracted.numeroNF || '',
+        clienteCnpjCpf: extracted.clienteCnpjCpf || '',
+        servicoDescricao: extracted.servicoDescricao || 'Serviço de Intermediação Comercial',
+        valorBaseContrato: extracted.valorBaseContrato || 0,
+        percentualComissao: extracted.percentualComissao || 10,
+        valorComissao: extracted.valorComissao || (extracted.valorBaseContrato ? (extracted.valorBaseContrato * (extracted.percentualComissao || 10) / 100) : 0),
+        dataVencimentoNF: extracted.dataVencimentoNF || new Date().toISOString().split('T')[0],
+        statusNF: 'Não emitida',
+        statusPagamento: 'Aguardando',
+        pagoOuNao: 'Não pago',
+        observacoes: extracted.observacoes || `Extraído de ${filename}`,
+        criadoEm: new Date().toISOString(),
+        pdfNomeArquivo: filename,
+        parcelaAtual: 1,
+        totalParcelas: 1
+      });
+    }
+
+    const updatedRecords = deduplicateRecords([...newRecordsCreated, ...records]);
+    setRecords(updatedRecords);
+
+    const firstRec = newRecordsCreated[0];
+
+    // Add notification
+    const newNotif: AppNotification = {
+      id: `notif-${Date.now()}`,
+      titulo: totalParcelas > 1 ? `Contrato Parcelado (${totalParcelas}x) Lido` : 'Novo Contrato PDF Lido',
+      mensagem: totalParcelas > 1 
+        ? `Contrato de ${baseCliente} lido com sucesso. Geradas ${totalParcelas} parcelas de comissão com vencimentos mensais.`
+        : `Contrato de ${baseCliente} lido com sucesso. Comissão de R$ ${(firstRec.valorComissao || 0).toLocaleString('pt-BR')} preenchida.`,
+      tipo: 'sucesso',
+      data: 'Agora',
+      lida: false
+    };
+
+    setNotifications(prev => [newNotif, ...prev]);
+
+    // Open prefilled modal so user can review the first installment
+    setSelectedRecord(firstRec);
+    setIsRecordModalOpen(true);
+
+    // Automatically trigger email dispatch and download Excel
+    try {
+      const emailRes = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userEmail: emailSettings.userEmail,
+          subject: `📊 [MBS] Contrato ${totalParcelas > 1 ? `Parcelado em ${totalParcelas}x` : ''} Lido: ${baseCliente}`,
+          records: updatedRecords,
+          newRecord: firstRec
+        })
+      });
+
+      const emailData = await emailRes.json();
+      if (emailData.attachmentBase64) {
+        // Trigger direct browser download of the updated Excel file
+        const byteCharacters = atob(emailData.attachmentBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = emailData.attachmentName || `Planilha_Comissoes_${baseCliente}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      showToast(
+        totalParcelas > 1 
+          ? `Contrato lido! Geradas ${totalParcelas} parcelas na planilha e arquivo Excel baixado.`
+          : `Contrato lido com sucesso! Planilha Excel baixada e notificação enviada para ${emailSettings.userEmail}.`, 
+        'success'
+      );
+    } catch (err) {
+      console.error("Erro ao processar envio de e-mail/excel:", err);
+      showToast(totalParcelas > 1 ? `${totalParcelas} parcelas geradas na planilha!` : 'Novo contrato lido e preenchido!', 'success');
+    }
+
+    // Always feed into Google Sheets on every contract inclusion
+    handleSyncToSheets(updatedRecords).catch(e => console.warn('Sync Google Sheets notice:', e));
+  };
+
+  const handleUpdateRecord = (updatedRecord: CommissionRecord) => {
+    const updatedList = records.map(r => r.id === updatedRecord.id ? updatedRecord : r);
+    setRecords(updatedList);
+    showToast(`Comissão de ${updatedRecord.clienteNome} atualizada.`);
+    if (sheetSettings.spreadsheetId) {
+      handleSyncToSheets(updatedList).catch(e => console.warn('Sync notice:', e));
+    }
+  };
+
+  const handleDeleteRecord = (id: string) => {
+    const target = records.find(r => r.id === id);
+    if (target) {
+      setRecordToDelete(target);
+    }
+  };
+
+  const executeDeleteRecord = () => {
+    if (!recordToDelete) return;
+    const targetId = recordToDelete.id;
+    const targetName = recordToDelete.clienteNome || recordToDelete.clube || 'Comissão';
+    const updatedList = records.filter(r => r.id !== targetId);
+    setRecords(updatedList);
+    setRecordToDelete(null);
+    setIsRecordModalOpen(false);
+    showToast(`Comissão (${targetName}) excluída com sucesso!`, 'info');
+    if (sheetSettings.spreadsheetId) {
+      handleSyncToSheets(updatedList).catch(e => console.warn('Sync delete notice:', e));
+    }
+  };
+
+  const handleSaveRecordModal = (recordToSave: CommissionRecord) => {
+    const exists = records.some(r => r.id === recordToSave.id);
+    let updatedList: CommissionRecord[];
+    if (exists) {
+      updatedList = records.map(r => r.id === recordToSave.id ? recordToSave : r);
+      showToast('Registro atualizado na planilha.');
+    } else {
+      updatedList = [recordToSave, ...records];
+      showToast('Novo registro adicionado à planilha.');
+    }
+    setRecords(updatedList);
+    if (sheetSettings.spreadsheetId) {
+      handleSyncToSheets(updatedList).catch(e => console.warn('Sync modal notice:', e));
+    }
+  };
+
+  const handleOpenEditRecord = (record: CommissionRecord) => {
+    setSelectedRecord(record);
+    setIsRecordModalOpen(true);
+  };
+
+  const handleOpenAddRecord = () => {
+    setSelectedRecord(null);
+    setIsRecordModalOpen(true);
+  };
+
+  const unreadNotifCount = notifications.filter(n => !n.lida).length;
+
+  return (
+    <div className="min-h-screen bg-zinc-100 text-zinc-900 flex flex-col font-sans">
+      {/* Top Bar Header */}
+      <Header
+        notifications={notifications}
+        emailSettings={emailSettings}
+        onOpenEmailModal={() => setIsEmailModalOpen(true)}
+        onOpenSheetsModal={() => setIsSheetsModalOpen(true)}
+        onOpenNotifications={() => setIsNotificationsOpen(true)}
+        unreadCount={unreadNotifCount}
+      />
+
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
+        {/* Main App Division Navigation Tabs */}
+        <div className="flex items-center space-x-2 sm:space-x-3 border-b-4 border-zinc-900 mb-6 pb-3 overflow-x-auto">
+          <button
+            onClick={() => setMainAppTab('inclusao')}
+            className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 font-black uppercase text-xs sm:text-sm tracking-wider border-3 border-zinc-900 transition cursor-pointer whitespace-nowrap ${
+              mainAppTab === 'inclusao'
+                ? 'bg-amber-400 text-zinc-950 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] translate-y-[-2px]'
+                : 'bg-white hover:bg-zinc-200 text-zinc-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]'
+            }`}
+          >
+            <FileSpreadsheet className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+            <span>Inclusão (PDF) & Planilha</span>
+          </button>
+
+          <button
+            onClick={() => setMainAppTab('dashboard')}
+            className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 font-black uppercase text-xs sm:text-sm tracking-wider border-3 border-zinc-900 transition cursor-pointer whitespace-nowrap ${
+              mainAppTab === 'dashboard'
+                ? 'bg-amber-400 text-zinc-950 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] translate-y-[-2px]'
+                : 'bg-white hover:bg-zinc-200 text-zinc-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]'
+            }`}
+          >
+            <LayoutDashboard className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+            <span>Dashboard</span>
+          </button>
+        </div>
+
+        {mainAppTab === 'inclusao' ? (
+          <>
+            {/* Banner callout */}
+            <div className="bg-zinc-900 text-white p-4 sm:p-6 mb-4 sm:mb-6 border-3 sm:border-4 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] sm:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2.5 h-2.5 bg-emerald-400 border border-zinc-900"></span>
+                  <span className="text-[10px] sm:text-xs font-black text-emerald-400 tracking-widest uppercase">
+                    Sincronização Google Sheets Ativa
+                  </span>
+                </div>
+                <h2 className="text-base sm:text-lg font-black uppercase tracking-tight text-white leading-tight">
+                  Controle de Notas Fiscais & Preenchimento Automático
+                </h2>
+                <p className="text-[11px] sm:text-xs font-semibold text-zinc-300">
+                  Envie o contrato em PDF. O Gemini realiza a leitura das cláusulas, insere os dados na planilha do <strong className="text-emerald-400 font-black">Google Sheets</strong> e notifica por e-mail (<strong className="text-white font-black underline">{emailSettings.userEmail}</strong>).
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full md:w-auto">
+                <button
+                  onClick={handleImportFromSheets}
+                  disabled={isSheetsSyncing}
+                  className="inline-flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black uppercase text-[11px] sm:text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50 min-h-[40px]"
+                  title="Sincronizar com os dados da planilha do Google Sheets"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-zinc-950 flex-shrink-0 ${isSheetsSyncing ? 'animate-spin' : ''}`} />
+                  <span>{isSheetsSyncing ? 'Carregando...' : 'Carregar Sheets'}</span>
+                </button>
+
+                <button
+                  onClick={() => setIsSheetsModalOpen(true)}
+                  className="inline-flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-black uppercase text-[11px] sm:text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px]"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-zinc-950 flex-shrink-0" />
+                  <span>Configurar</span>
+                </button>
+
+                <a
+                  href={sheetSettings.spreadsheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="col-span-2 sm:col-span-1 inline-flex items-center justify-center space-x-1 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-black uppercase text-[11px] sm:text-xs tracking-wider border-2 border-zinc-900 transition min-h-[40px]"
+                >
+                  <span>Abrir Planilha</span>
+                  <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
+                </a>
+              </div>
+            </div>
+
+            {/* Contract PDF Uploader with Gemini AI */}
+            <ContractUploader
+              onContractExtracted={handleContractExtracted}
+              isProcessing={false}
+              userEmail={emailSettings.userEmail}
+            />
+
+            {/* Spreadsheet Table */}
+            <SpreadsheetTable
+              records={records}
+              selectedYear={selectedYear}
+              activeTab={dashboardTab}
+              onTabChange={setDashboardTab}
+              onUpdateRecord={handleUpdateRecord}
+              onDeleteRecord={handleDeleteRecord}
+              onAddNewRecord={handleOpenAddRecord}
+              onOpenEmailModal={() => setIsEmailModalOpen(true)}
+              onViewRecordDetail={handleOpenEditRecord}
+              onDeduplicateRecords={handleDeduplicateRecords}
+              onSeparateAtletas={handleSeparateAtletas}
+            />
+          </>
+        ) : (
+          /* Dashboard Tab View */
+          <DashboardView
+            records={records}
+            selectedYear={selectedYear}
+            onSelectYear={setSelectedYear}
+            availableYears={availableYears}
+            onOpenRecordDetail={handleOpenEditRecord}
+            onNavigateToTable={handleNavigateToTable}
+          />
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="bg-white border-t-4 border-zinc-900 py-5 text-center text-xs font-bold uppercase tracking-wider text-zinc-900">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <div className="flex items-center space-x-2">
+            <Sparkles className="w-4 h-4 text-zinc-900" />
+            <span className="font-black text-zinc-900">Márcio Bittencourt Sports</span>
+            <span>• Leitura de PDF com IA Gemini & Sincronização Google Sheets</span>
+          </div>
+          <div>
+            Link Planilha: <a href={sheetSettings.spreadsheetUrl} target="_blank" rel="noreferrer" className="text-zinc-950 font-black underline hover:text-emerald-600">Abrir no Google Sheets ↗</a>
+          </div>
+        </div>
+      </footer>
+
+      {/* Modals */}
+      <EmailModal
+        isOpen={isEmailModalOpen}
+        onClose={() => setIsEmailModalOpen(false)}
+        emailSettings={emailSettings}
+        onUpdateSettings={setEmailSettings}
+        records={records}
+      />
+
+      <GoogleSheetsModal
+        isOpen={isSheetsModalOpen}
+        onClose={() => setIsSheetsModalOpen(false)}
+        records={records}
+        sheetSettings={sheetSettings}
+        onSaveSettings={setSheetSettings}
+        onSyncToSheets={handleSyncToSheets}
+        onImportFromSheets={handleImportFromSheets}
+        isSyncing={isSheetsSyncing}
+      />
+
+      <NotificationCenter
+        isOpen={isNotificationsOpen}
+        onClose={() => setIsNotificationsOpen(false)}
+        notifications={notifications}
+        onMarkAllAsRead={() => setNotifications(notifications.map(n => ({ ...n, lida: true })))}
+      />
+
+      <RecordModal
+        isOpen={isRecordModalOpen}
+        onClose={() => setIsRecordModalOpen(false)}
+        record={selectedRecord}
+        onSave={handleSaveRecordModal}
+        onDelete={handleDeleteRecord}
+      />
+
+      {/* Confirmation Modal for Deletion */}
+      {recordToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border-4 border-zinc-900 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center space-x-3 text-rose-600">
+              <div className="p-2 bg-rose-100 border-2 border-zinc-900">
+                <Trash2 className="w-6 h-6 text-rose-600" />
+              </div>
+              <h3 className="text-lg font-black uppercase text-zinc-900">Excluir Comissão</h3>
+            </div>
+            
+            <div className="space-y-2 text-xs font-bold text-zinc-800">
+              <p>
+                Tem certeza que deseja excluir esta comissão da planilha?
+              </p>
+              <div className="p-3 bg-zinc-100 border-2 border-zinc-900 font-mono text-[11px] space-y-1">
+                <div><strong>Clube / Cliente:</strong> {recordToDelete.clube || recordToDelete.clienteNome}</div>
+                <div><strong>Atleta:</strong> {recordToDelete.atleta || '-'}</div>
+                <div><strong>Valor MMB:</strong> R$ {(recordToDelete.valorComissao || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                <div><strong>Parcela:</strong> {recordToDelete.parcelaAtual || 1}/{recordToDelete.totalParcelas || 1}</div>
+              </div>
+              <p className="text-[11px] text-zinc-500 italic">
+                * Esta ação atualizará imediatamente a tabela local e o Google Sheets conectado.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-3 border-t-2 border-zinc-900">
+              <button
+                type="button"
+                onClick={() => setRecordToDelete(null)}
+                className="px-4 py-2 border-2 border-zinc-900 bg-zinc-200 hover:bg-zinc-300 text-zinc-900 text-xs font-black uppercase tracking-wider transition"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={executeDeleteRecord}
+                className="inline-flex items-center space-x-1.5 px-4 py-2 border-2 border-zinc-900 bg-rose-500 hover:bg-rose-600 text-white text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5"
+              >
+                <Trash2 className="w-4 h-4 text-white" />
+                <span>Sim, Excluir</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-50 flex items-center space-x-2 px-4 py-3 bg-zinc-900 text-white border-2 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-xs font-black uppercase tracking-wider">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span>{toast.message}</span>
+        </div>
+      )}
+    </div>
+  );
+}

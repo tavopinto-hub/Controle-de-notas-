@@ -1,0 +1,6 @@
+{
+  "name": "Márcio Bittencourt Sports - Comissões",
+  "description": "Controle de emissão de notas fiscais e comissões da Márcio Bittencourt Sports, leitura de contratos em PDF com Gemini AI e notificações automáticas por e-mail.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

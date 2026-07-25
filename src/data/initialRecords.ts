@@ -1,0 +1,73 @@
+import { CommissionRecord } from '../types';
+
+export const initialRecords: CommissionRecord[] = [
+  {
+    id: 'rec-001',
+    numeroContrato: 'CT-2026/089',
+    clienteNome: 'Nexus Tecnologia S.A.',
+    clienteCnpjCpf: '12.345.678/0001-90',
+    servicoDescricao: 'Consultoria de Software e Integração Cloud',
+    valorBaseContrato: 45000.00,
+    percentualComissao: 10.0,
+    valorComissao: 4500.00,
+    dataVencimentoNF: '2026-07-28',
+    statusNF: 'Pendente',
+    statusPagamento: 'Aguardando',
+    observacoes: 'Emitir NF até dia 28/07 para garantir liquidação no mês corrente.',
+    criadoEm: '2026-07-20T10:00:00.000Z',
+    pdfNomeArquivo: 'Contrato_Nexus_Comissao.pdf'
+  },
+  {
+    id: 'rec-002',
+    numeroContrato: 'CT-2026/074',
+    clienteNome: 'Grupo Horizonte Logística',
+    clienteCnpjCpf: '98.765.432/0001-11',
+    servicoDescricao: 'Implementação de Gestão ERP e Treinamento',
+    valorBaseContrato: 120000.00,
+    percentualComissao: 8.5,
+    valorComissao: 10200.00,
+    dataVencimentoNF: '2026-07-22',
+    statusNF: 'Emitida',
+    dataEmissaoNF: '2026-07-21',
+    numeroNF: 'NF-001248',
+    statusPagamento: 'Aguardando',
+    observacoes: 'Nota Fiscal emitida. Pagamento previsto para 05/08.',
+    criadoEm: '2026-07-15T14:30:00.000Z',
+    pdfNomeArquivo: 'Contrato_Horizonte_Comissao.pdf'
+  },
+  {
+    id: 'rec-003',
+    numeroContrato: 'CT-2026/061',
+    clienteNome: 'Vanguard Engenharia e Indústria',
+    clienteCnpjCpf: '45.112.334/0001-55',
+    servicoDescricao: 'Intermediação de Venda de Ativos de TI',
+    valorBaseContrato: 85000.00,
+    percentualComissao: 12.0,
+    valorComissao: 10200.00,
+    dataVencimentoNF: '2026-07-10',
+    statusNF: 'Emitida',
+    dataEmissaoNF: '2026-07-09',
+    numeroNF: 'NF-001210',
+    statusPagamento: 'Pago',
+    dataPagamento: '2026-07-15',
+    observacoes: 'Comissão quitada com sucesso via PIX.',
+    criadoEm: '2026-07-01T09:15:00.000Z',
+    pdfNomeArquivo: 'Contrato_Vanguard_Comissao.pdf'
+  },
+  {
+    id: 'rec-004',
+    numeroContrato: 'CT-2026/095',
+    clienteNome: 'Solaris Energia Renovável',
+    clienteCnpjCpf: '33.998.776/0001-22',
+    servicoDescricao: 'Assessoria de Negócios e Parcerias Comerciais',
+    valorBaseContrato: 60000.00,
+    percentualComissao: 7.0,
+    valorComissao: 4200.00,
+    dataVencimentoNF: '2026-07-30',
+    statusNF: 'Pendente',
+    statusPagamento: 'Aguardando',
+    observacoes: 'Aguardando encerramento da medição técnica para liberar emissão.',
+    criadoEm: '2026-07-22T16:00:00.000Z',
+    pdfNomeArquivo: 'Contrato_Solaris_Comissao.pdf'
+  }
+];
