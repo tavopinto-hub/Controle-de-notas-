@@ -1228,6 +1228,9 @@ app.post("/api/sheets/read", async (req, res) => {
 });
 
 async function startServer() {
+  // Static public assets
+  app.use(express.static(path.join(process.cwd(), "public")));
+
   // Vite middleware for development or static serving for production
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
