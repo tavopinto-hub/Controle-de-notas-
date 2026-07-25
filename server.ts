@@ -46,6 +46,67 @@ function getSheetsClient(accessToken?: string) {
   return google.sheets({ version: "v4", auth });
 }
 
+// Helper to normalize any date string into standard ISO YYYY-MM-DD
+function normalizeToIsoDate(dateStr: any): string {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const trimmed = dateStr.trim();
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+
+  // DD/MM/YYYY
+  const brMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (brMatch) {
+    const d = brMatch[1].padStart(2, '0');
+    const m = brMatch[2].padStart(2, '0');
+    const y = brMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  // YYYY/MM/DD
+  const isoSlashMatch = trimmed.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (isoSlashMatch) {
+    const y = isoSlashMatch[1];
+    const m = isoSlashMatch[2].padStart(2, '0');
+    const d = isoSlashMatch[3].padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // DD-MM-YYYY
+  const brDashMatch = trimmed.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (brDashMatch) {
+    const d = brDashMatch[1].padStart(2, '0');
+    const m = brDashMatch[2].padStart(2, '0');
+    const y = brDashMatch[3];
+    return `${y}-${m}-${d}`;
+  }
+
+  // Text date like "20 de Janeiro de 2026" or "15/02/2026"
+  const monthsMap: Record<string, string> = {
+    jan: '01', janeiro: '01', fev: '02', fevereiro: '02', mar: '03', marco: '03', março: '03',
+    abr: '04', abril: '04', mai: '05', maio: '05', jun: '06', junho: '06', jul: '07', julho: '07',
+    ago: '08', agosto: '08', set: '09', setembro: '09', out: '10', outubro: '10', nov: '11', novembro: '11', dez: '12', dezembro: '12'
+  };
+
+  const textMatch = trimmed.match(/(\d{1,2})\s+(?:de\s+)?([a-zçáéíóú]+)\s+(?:de\s+)?(\d{4})/i);
+  if (textMatch) {
+    const day = textMatch[1].padStart(2, '0');
+    const monthText = textMatch[2].toLowerCase();
+    const year = textMatch[3];
+    const monthNum = monthsMap[monthText];
+    if (monthNum) {
+      return `${year}-${monthNum}-${day}`;
+    }
+  }
+
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+
+  return '';
+}
+
 // Endpoint: Analyze PDF Contract using Gemini AI & pdf-parse fallback
 app.post("/api/contracts/analyze", (req, res, next) => {
   upload.single("pdfFile")(req, res, (err) => {
@@ -82,38 +143,45 @@ app.post("/api/contracts/analyze", (req, res, next) => {
 
     let extractedData: any = null;
 
-    // 2. Gemini AI analysis with custom key header support & two-stage strategy
+    // 2. Gemini AI analysis with custom key header support & multimodal inlineData PDF
     const ai = getGeminiClient(req);
     if (ai) {
       const prompt = `Você é um assistente especialista em análise jurídica e financeira de contratos comerciais e de intermediação esportiva brasileiros (MMB Sports).
-Analise com atenção o contrato de comissão / prestação de serviços fornecido e extraia os seguintes dados para o preenchimento automático da planilha de controle de Nota Fiscal e Comissão:
+Analise com ATENÇÃO TOTAL o documento de contrato fornecido em PDF e extraia os dados exatamente como constam no documento.
 
-${pdfText ? `TEXTO EXTRAÍDO DO CONTRATO:\n"""\n${pdfText.substring(0, 15000)}\n"""\n` : ''}
+${pdfText ? `TEXTO EXTRAÍDO DO PDF:\n"""\n${pdfText.substring(0, 15000)}\n"""\n` : ''}
 
-ATENÇÃO EXTREMA PARA O VALOR CHEIO TOTAL DA COMISSÃO E PARCELAS:
-- Identifique o VALOR CHEIO TOTAL DA COMISSÃO (valorComissao) em R$. Se o contrato mencionar, por exemplo, "3 parcelas de R$ 5.000,00", o valorComissao TOTAL É A SOMA TOTAL (R$ 15.000,00). Nunca retorne apenas o valor de 1 parcela no campo valorComissao.
-- Verifique o NÚMERO DE PARCELAS (numeroParcelas) do contrato (ex: 2x, 3x, 4x, 6x, 10x, 12x, parcelas mensais, semestrais ou bimestrais). Se houver parcelamento, defina 'eParcelado: true' e informe 'numeroParcelas' exato.
-- Preencha a lista 'parcelas' informando cada parcela com seu valor (valorParcela) e data de vencimento (dataVencimento).
-- A SOMA do valorParcela de todas as parcelas DEVE SER IGUAL ao valorComissao total cheio.
+REGRAS RÍGIDAS DE EXTRAÇÃO PARA OS 6 CAMPOS PRINCIPAIS:
 
-Extraia os seguintes campos em JSON:
-1. numeroContrato: O número, código ou identificador do contrato (ex: CT-2026/102 ou nº do instrumento).
-2. clienteNome: Razão Social ou Nome do Cliente / Contratante que pagará a comissão.
-3. clube: Nome do Clube de futebol / agremiação (ex: CR Flamengo, SE Palmeiras). ATENÇÃO: Se o texto trouxer o atleta colado ao clube (ex: 'CR Flamengo - Gabriel Barbosa' ou 'Palmeiras / Dudu'), extraia APENAS o nome do clube aqui.
-4. atleta: Nome do Atleta / Jogador de futebol (ex: Gabriel Barbosa, Dudu). Se o nome do atleta estiver colado com o clube no texto, SEPARE e coloque o nome do atleta AQUI.
-5. tipoContrato: Tipo ou modalidade do contrato (ex: Renovação, Empréstimo, Transferência, Representação, Intermediação, Patrocínio).
-6. dataContrato: Data de assinatura/celebração do contrato no formato YYYY-MM-DD.
-7. numeroNF: Número da Nota Fiscal se estiver especificado no contrato.
-8. clienteCnpjCpf: CNPJ ou CPF do Cliente / Clube (formatado com pontuação ex: 00.000.000/0001-00 se disponível).
-9. servicoDescricao: Descrição sucinta do serviço prestado ou objeto do contrato.
-10. valorBaseContrato: Valor total bruto da venda/contrato/projeto em R$ (apenas número decimal, ex: 50000.00).
-11. percentualComissao: Percentual de comissão acordado (apenas número decimal, ex: 10.0 para 10%).
-12. valorComissao: Valor TOTAL CHEIO MMB em R$ da comissão calculada ou especificada no contrato (apenas número decimal, ex: 15000.00).
-13. dataVencimentoNF: DATA prevista ou prazo limite para emissão/vencimento da 1ª Nota Fiscal (no formato YYYY-MM-DD).
-14. eParcelado: boolean (true se houver mais de 1 parcela, false se for pagamento único/à vista).
-15. numeroParcelas: number (quantidade total de parcelas. Ex: 1 para à vista, 2, 3, 6, 12 etc.).
-16. parcelas: lista de objetos contendo { numeroParcela, valorParcela, dataVencimento (YYYY-MM-DD), descricao }.
-17. observacoes: OBS / Destaques e cláusulas importantes do contrato.`;
+1. CLUBE ("clube"):
+   - Extraia o Nome do Clube de futebol / Agremiação Esportiva (ex: CR Flamengo, SE Palmeiras, Fluminense FC, Santos FC, Grêmio FBPA).
+   - NUNCA inclua o nome do atleta neste campo.
+   - Se o cliente for uma empresa intermediária mas o contrato for relativo a um clube, extraia o nome do clube de futebol aqui.
+
+2. ATLETA ("atleta"):
+   - Extraia o Nome do Atleta / Jogador de Futebol objeto do contrato ou da intermediação (ex: Gabriel Barbosa, Dudu, Jhon Arias).
+   - Se o nome do atleta estiver junto com o clube no documento (ex: "Flamengo - Gabigol"), SEPARE e informe APENAS o atleta aqui.
+
+3. VALOR DA COMISSÃO ("valorComissao") E DO CONTRATO ("valorBaseContrato"):
+   - "valorComissao": VALOR TOTAL CHEIO em R$ da comissão devida à MMB Sports. Se o contrato mencionar "3 parcelas de R$ 50.000,00", o valorComissao TOTAL É A SOMA TOTAL (150000.00). NUNCA informe apenas o valor de 1 parcela no valorComissao total.
+   - "valorBaseContrato": Valor bruto global do contrato/transação/transferência/patrocínio em R$ (ex: 1500000.00).
+   - "percentualComissao": Percentual de comissão acordado (ex: 10.0 para 10%).
+
+4. PARCELAS E PARCELAMENTO ("eParcelado", "numeroParcelas", "parcelas"):
+   - "eParcelado": true se houver 2 ou mais parcelas; false se for pagamento único/à vista.
+   - "numeroParcelas": Quantidade total de parcelas (ex: 1, 2, 3, 4, 6, 12...).
+   - "parcelas": Lista de objetos de cada parcela especificada no contrato:
+     - "numeroParcela": 1, 2, 3...
+     - "valorParcela": valor numérico em R$ de CADA parcela (ex: 50000.00)
+     - "dataVencimento": data de vencimento da parcela no formato YYYY-MM-DD (ex: 2026-02-15)
+     - "descricao": descrição sucinta da parcela (ex: "Parcela 1/3")
+
+5. DATA DE INÍCIO DAS NOTAS / VENCIMENTO DA 1ª NF ("dataVencimentoNF"):
+   - Data do vencimento ou emissão prevista para a PRIMEIRA Nota Fiscal / 1ª Parcela no formato YYYY-MM-DD (ex: 2026-02-15).
+   - Se houver parcelamento, esta data DEVE ser idêntica à data de vencimento da 1ª parcela.
+
+6. DATA DO CONTRATO ("dataContrato"):
+   - Data de celebração, assinatura ou início de vigência do contrato no formato YYYY-MM-DD (ex: 2026-01-20).`;
 
       const responseSchema = {
         type: Type.OBJECT,
@@ -150,54 +218,40 @@ Extraia os seguintes campos em JSON:
         required: ["clienteNome"],
       };
 
-      // Strategy 1: If text was extracted from PDF, try text prompt first
-      if (pdfText && pdfText.length > 20) {
-        try {
-          console.log(`Analisando texto do PDF (${pdfText.length} caracteres) com Gemini 3.6 Flash...`);
-          const response = await ai.models.generateContent({
-            model: "gemini-3.6-flash",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json",
-              responseSchema,
+      try {
+        console.log(`Analisando contrato PDF (${file.originalname}, ${file.size} bytes) via Gemini 3.6 Flash multimodal...`);
+        const response = await ai.models.generateContent({
+          model: "gemini-3.6-flash",
+          contents: [
+            {
+              inlineData: {
+                mimeType,
+                data: base64Pdf,
+              },
             },
-          });
-          if (response.text) {
-            extractedData = JSON.parse(response.text);
-          }
-        } catch (textGeminiErr) {
-          console.warn("Aviso na análise via texto do PDF com Gemini:", textGeminiErr);
-        }
-      }
+            {
+              text: prompt,
+            },
+          ],
+          config: {
+            responseMimeType: "application/json",
+            responseSchema,
+          },
+        });
 
-      // Strategy 2: If text prompt skipped or didn't yield result, try visual multimodal inlineData PDF
-      if (!extractedData || !extractedData.clienteNome) {
-        try {
-          console.log(`Analisando arquivo visual ${file.originalname} (${file.size} bytes) via Gemini inlineData PDF...`);
-          const response = await ai.models.generateContent({
-            model: "gemini-3.6-flash",
-            contents: [
-              {
-                inlineData: {
-                  mimeType,
-                  data: base64Pdf,
-                },
-              },
-              {
-                text: prompt,
-              },
-            ],
-            config: {
-              responseMimeType: "application/json",
-              responseSchema,
-            },
+        if (response.text) {
+          extractedData = JSON.parse(response.text);
+          console.log("Sucesso no Gemini PDF multimodal. Dados extraídos:", {
+            clube: extractedData.clube,
+            atleta: extractedData.atleta,
+            valorComissao: extractedData.valorComissao,
+            numeroParcelas: extractedData.numeroParcelas,
+            dataContrato: extractedData.dataContrato,
+            dataVencimentoNF: extractedData.dataVencimentoNF
           });
-          if (response.text) {
-            extractedData = JSON.parse(response.text);
-          }
-        } catch (inlineGeminiErr) {
-          console.warn("Aviso na análise via inlineData PDF com Gemini:", inlineGeminiErr);
         }
+      } catch (geminiErr) {
+        console.warn("Aviso na análise multimodal do PDF com Gemini:", geminiErr);
       }
     }
 
@@ -230,9 +284,7 @@ Extraia os seguintes campos em JSON:
 
       // Search dates (DD/MM/YYYY)
       const dateMatch = pdfText.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-      let dataVenc = new Date();
-      dataVenc.setDate(dataVenc.getDate() + 10);
-      let dataVencFormatted = dataVenc.toISOString().split("T")[0];
+      let dataVencFormatted = new Date().toISOString().split("T")[0];
 
       if (dateMatch) {
         const [_, dd, mm, yyyy] = dateMatch;
@@ -275,7 +327,18 @@ Extraia os seguintes campos em JSON:
       };
     }
 
-    // 4. Normalize defaults & generate parcelas array safely
+    // 4. Normalize dates strictly to YYYY-MM-DD
+    extractedData.dataContrato = normalizeToIsoDate(extractedData.dataContrato);
+    extractedData.dataVencimentoNF = normalizeToIsoDate(extractedData.dataVencimentoNF);
+
+    if (Array.isArray(extractedData.parcelas)) {
+      extractedData.parcelas = extractedData.parcelas.map((p: any) => ({
+        ...p,
+        dataVencimento: normalizeToIsoDate(p.dataVencimento)
+      }));
+    }
+
+    // 5. Normalize defaults & generate parcelas array safely
     if (!extractedData.clienteNome || extractedData.clienteNome.length < 2) {
       extractedData.clienteNome = file.originalname.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim() || "Cliente / Contratante";
     }
@@ -284,7 +347,7 @@ Extraia os seguintes campos em JSON:
       extractedData.valorComissao = Math.round(((extractedData.valorBaseContrato * extractedData.percentualComissao) / 100) * 100) / 100;
     }
 
-    if (!extractedData.dataVencimentoNF || !/^\d{4}-\d{2}-\d{2}$/.test(extractedData.dataVencimentoNF)) {
+    if (!extractedData.dataVencimentoNF) {
       const defaultDate = new Date();
       defaultDate.setDate(defaultDate.getDate() + 7);
       extractedData.dataVencimentoNF = defaultDate.toISOString().split("T")[0];
@@ -317,7 +380,7 @@ Extraia os seguintes campos em JSON:
           ? existingP.valorParcela 
           : (i === extractedData.numeroParcelas ? Math.round((valorBaseParcela + diffRounding) * 100) / 100 : valorBaseParcela);
 
-        let dateStr = existingP?.dataVencimento;
+        let dateStr = normalizeToIsoDate(existingP?.dataVencimento);
         if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
           const dt = new Date(vYear, (vMonth - 1) + (i - 1), vDay || 10);
           const yyyy = dt.getFullYear();
@@ -333,7 +396,13 @@ Extraia os seguintes campos em JSON:
           descricao: existingP?.descricao || `Parcela ${i}/${extractedData.numeroParcelas}`
         });
       }
+
       extractedData.parcelas = parcelasGenerated;
+
+      // Set dataVencimentoNF to 1st installment date
+      if (parcelasGenerated.length > 0 && parcelasGenerated[0].dataVencimento) {
+        extractedData.dataVencimentoNF = parcelasGenerated[0].dataVencimento;
+      }
     }
 
     return res.json({

@@ -18,7 +18,7 @@ import { CommissionRecord, ContractAnalysisResult, AppNotification, EmailSetting
 import { Sparkles, CheckCircle2, AlertTriangle, FileSpreadsheet, ExternalLink, RefreshCw, Trash2, LayoutDashboard, FileText } from 'lucide-react';
 import { initAuth, getCachedAccessToken } from './lib/googleAuth';
 import { getRecordYear } from './utils/dateUtils';
-import { normalizeRecordsClubeAtleta } from './utils/athleteUtils';
+import { normalizeRecordsClubeAtleta, cleanClubeAndAtleta } from './utils/athleteUtils';
 import { fetchSheetRecordsDirectly } from './utils/sheetsClient';
 
 const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
@@ -341,14 +341,24 @@ export default function App() {
     const baseCliente = extracted.clienteNome || 'Cliente Não Identificado';
     const totalParcelas = extracted.parcelas?.length || extracted.numeroParcelas || 1;
 
+    // Clean and split clube and atleta if glued together
+    const { clube: cleanedClube, atleta: cleanedAtleta } = cleanClubeAndAtleta(
+      extracted.clube,
+      extracted.atleta,
+      extracted.clienteNome
+    );
+
+    const finalClube = cleanedClube || extracted.clube || baseCliente;
+    const finalAtleta = cleanedAtleta || (extracted.atleta && extracted.atleta !== '-' ? extracted.atleta : '-');
+
     if (extracted.parcelas && extracted.parcelas.length > 1) {
       extracted.parcelas.forEach((p, idx) => {
         newRecordsCreated.push({
           id: `rec-${Date.now()}-${idx + 1}`,
           numeroContrato: `${baseContratoNo} (${p.numeroParcela}/${totalParcelas})`,
           clienteNome: baseCliente,
-          clube: extracted.clube || baseCliente,
-          atleta: extracted.atleta || '-',
+          clube: finalClube,
+          atleta: finalAtleta,
           tipoContrato: extracted.tipoContrato || 'Intermediação Comercial',
           dataContrato: extracted.dataContrato || new Date().toISOString().split('T')[0],
           numeroNF: extracted.numeroNF || '',
@@ -373,8 +383,8 @@ export default function App() {
         id: `rec-${Date.now()}`,
         numeroContrato: baseContratoNo,
         clienteNome: baseCliente,
-        clube: extracted.clube || baseCliente,
-        atleta: extracted.atleta || '-',
+        clube: finalClube,
+        atleta: finalAtleta,
         tipoContrato: extracted.tipoContrato || 'Intermediação Comercial',
         dataContrato: extracted.dataContrato || new Date().toISOString().split('T')[0],
         numeroNF: extracted.numeroNF || '',
