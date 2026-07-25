@@ -9,6 +9,7 @@ import { StatsOverview } from './components/StatsOverview';
 import { ContractUploader } from './components/ContractUploader';
 import { SpreadsheetTable } from './components/SpreadsheetTable';
 import { DashboardView } from './components/DashboardView';
+import { SyncView } from './components/SyncView';
 import { EmailModal } from './components/EmailModal';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 import { NotificationCenter } from './components/NotificationCenter';
@@ -121,8 +122,8 @@ export default function App() {
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Main Division Tab state ('inclusao' = PDF + Planilha, 'dashboard' = Visual Dashboard)
-  const [mainAppTab, setMainAppTab] = useState<'inclusao' | 'dashboard'>('inclusao');
+  // Main Division Tab state ('inclusao' = PDF + Planilha, 'dashboard' = Visual Dashboard, 'sincronizacao' = Google Sheets Sync)
+  const [mainAppTab, setMainAppTab] = useState<'inclusao' | 'dashboard' | 'sincronizacao'>('inclusao');
 
   // Dashboard Year & Status Filter states
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
@@ -348,8 +349,14 @@ export default function App() {
       extracted.clienteNome
     );
 
-    const finalClube = cleanedClube || extracted.clube || baseCliente;
-    const finalAtleta = cleanedAtleta || (extracted.atleta && extracted.atleta !== '-' ? extracted.atleta : '-');
+    // Prioritize exact values extracted by Gemini, fallback to cleanClubeAndAtleta if empty
+    const finalClube = (extracted.clube && extracted.clube.trim().length > 0 && extracted.clube !== '-') 
+      ? extracted.clube.trim() 
+      : (cleanedClube || baseCliente);
+
+    const finalAtleta = (extracted.atleta && extracted.atleta.trim().length > 0 && extracted.atleta !== '-') 
+      ? extracted.atleta.trim() 
+      : (cleanedAtleta || '-');
 
     if (extracted.parcelas && extracted.parcelas.length > 1) {
       extracted.parcelas.forEach((p, idx) => {
@@ -571,58 +578,22 @@ export default function App() {
             <LayoutDashboard className="w-4 h-4 text-zinc-950 flex-shrink-0" />
             <span>Dashboard</span>
           </button>
+
+          <button
+            onClick={() => setMainAppTab('sincronizacao')}
+            className={`inline-flex items-center space-x-2 px-4 sm:px-6 py-3 font-black uppercase text-xs sm:text-sm tracking-wider border-3 border-zinc-900 transition cursor-pointer whitespace-nowrap ${
+              mainAppTab === 'sincronizacao'
+                ? 'bg-emerald-400 text-zinc-950 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] translate-y-[-2px]'
+                : 'bg-white hover:bg-zinc-200 text-zinc-700 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]'
+            }`}
+          >
+            <RefreshCw className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+            <span>Sincronização</span>
+          </button>
         </div>
 
-        {mainAppTab === 'inclusao' ? (
-          <>
-            {/* Banner callout */}
-            <div className="bg-zinc-900 text-white p-4 sm:p-6 mb-4 sm:mb-6 border-3 sm:border-4 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] sm:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="space-y-1 min-w-0">
-                <div className="flex items-center space-x-2">
-                  <span className="w-2.5 h-2.5 bg-emerald-400 border border-zinc-900"></span>
-                  <span className="text-[10px] sm:text-xs font-black text-emerald-400 tracking-widest uppercase">
-                    Sincronização Google Sheets Ativa
-                  </span>
-                </div>
-                <h2 className="text-base sm:text-lg font-black uppercase tracking-tight text-white leading-tight">
-                  Controle de Notas Fiscais & Preenchimento Automático
-                </h2>
-                <p className="text-[11px] sm:text-xs font-semibold text-zinc-300">
-                  Envie o contrato em PDF. O Gemini realiza a leitura das cláusulas, insere os dados na planilha do <strong className="text-emerald-400 font-black">Google Sheets</strong> e notifica por e-mail (<strong className="text-white font-black underline">{emailSettings.userEmail}</strong>).
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 w-full md:w-auto">
-                <button
-                  onClick={handleImportFromSheets}
-                  disabled={isSheetsSyncing}
-                  className="inline-flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black uppercase text-[11px] sm:text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50 min-h-[40px]"
-                  title="Sincronizar com os dados da planilha do Google Sheets"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 text-zinc-950 flex-shrink-0 ${isSheetsSyncing ? 'animate-spin' : ''}`} />
-                  <span>{isSheetsSyncing ? 'Carregando...' : 'Carregar Sheets'}</span>
-                </button>
-
-                <button
-                  onClick={() => setIsSheetsModalOpen(true)}
-                  className="inline-flex items-center justify-center space-x-1.5 px-3 py-2.5 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-black uppercase text-[11px] sm:text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px]"
-                >
-                  <FileSpreadsheet className="w-3.5 h-3.5 text-zinc-950 flex-shrink-0" />
-                  <span>Configurar</span>
-                </button>
-
-                <a
-                  href={sheetSettings.spreadsheetUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="col-span-2 sm:col-span-1 inline-flex items-center justify-center space-x-1 px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white font-black uppercase text-[11px] sm:text-xs tracking-wider border-2 border-zinc-900 transition min-h-[40px]"
-                >
-                  <span>Abrir Planilha</span>
-                  <ExternalLink className="w-3.5 h-3.5 flex-shrink-0" />
-                </a>
-              </div>
-            </div>
-
+        {mainAppTab === 'inclusao' && (
+          <div className="space-y-6">
             {/* Contract PDF Uploader with Gemini AI */}
             <ContractUploader
               onContractExtracted={handleContractExtracted}
@@ -644,9 +615,10 @@ export default function App() {
               onDeduplicateRecords={handleDeduplicateRecords}
               onSeparateAtletas={handleSeparateAtletas}
             />
-          </>
-        ) : (
-          /* Dashboard Tab View */
+          </div>
+        )}
+
+        {mainAppTab === 'dashboard' && (
           <DashboardView
             records={records}
             selectedYear={selectedYear}
@@ -654,6 +626,19 @@ export default function App() {
             availableYears={availableYears}
             onOpenRecordDetail={handleOpenEditRecord}
             onNavigateToTable={handleNavigateToTable}
+          />
+        )}
+
+        {mainAppTab === 'sincronizacao' && (
+          <SyncView
+            records={records}
+            sheetSettings={sheetSettings}
+            onSaveSettings={setSheetSettings}
+            onSyncToSheets={handleSyncToSheets}
+            onImportFromSheets={handleImportFromSheets}
+            isSyncing={isSheetsSyncing}
+            onDeduplicateRecords={handleDeduplicateRecords}
+            onSeparateAtletas={handleSeparateAtletas}
           />
         )}
       </main>

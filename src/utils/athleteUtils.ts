@@ -137,8 +137,7 @@ export function normalizeRecordsClubeAtleta(records: CommissionRecord[]): Commis
       return {
         ...rec,
         clube: cleaned.clube,
-        atleta: cleaned.atleta,
-        clienteNome: cleaned.clube
+        atleta: cleaned.atleta
       };
     }
     return rec;

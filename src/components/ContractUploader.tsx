@@ -111,6 +111,7 @@ export const ContractUploader: React.FC<ContractUploaderProps> = ({
       }
 
       let resData: any = null;
+      let serverErrorMessage = '';
       try {
         const response = await fetch('/api/contracts/analyze', {
           method: 'POST',
@@ -118,25 +119,20 @@ export const ContractUploader: React.FC<ContractUploaderProps> = ({
           headers
         });
 
-        if (response.ok) {
-          resData = await response.json();
-        } else {
-          const errJson = await response.json().catch(() => ({}));
-          console.warn('Resposta do servidor ao analisar PDF:', errJson);
+        resData = await response.json().catch(() => null);
+        if (!response.ok || !resData?.success) {
+          serverErrorMessage = resData?.error || resData?.details || 'Erro ao processar e ler o PDF com a IA Gemini.';
         }
-      } catch (fetchErr) {
+      } catch (fetchErr: any) {
         console.warn('Erro na requisição ao servidor:', fetchErr);
+        serverErrorMessage = fetchErr?.message || 'Falha na conexão com o servidor ao enviar o PDF.';
       }
 
-      let extractedResult: ContractAnalysisResult;
-
-      if (resData && resData.success && resData.data) {
-        extractedResult = resData.data;
-      } else {
-        // Fallback: extract baseline data from filename so upload NEVER fails
-        console.log('Usando fallback de extração direta por nome do arquivo PDF...');
-        extractedResult = extractFallbackFromFilename(file);
+      if (serverErrorMessage || !resData || !resData.success || !resData.data) {
+        throw new Error(serverErrorMessage || 'Não foi possível extrair os dados do PDF. Verifique se o arquivo está legível.');
       }
+
+      const extractedResult: ContractAnalysisResult = resData.data;
 
       setCurrentStep(3);
       setStatusMessage('Preenchendo automaticamente a planilha...');

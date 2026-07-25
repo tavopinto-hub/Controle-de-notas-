@@ -133,55 +133,74 @@ app.post("/api/contracts/analyze", (req, res, next) => {
         const pdfData = await parseFunc(file.buffer);
         pdfText = pdfData?.text ? pdfData.text.trim() : "";
       }
-      console.log(`PDF parse extracted ${pdfText.length} characters from ${file.originalname}`);
+      console.log(`\n==================== [PDF ANALYZE ENDPOINT] ====================`);
+      console.log(`[PDF EXTRACTION] PDF parse extraiu ${pdfText.length} caracteres do arquivo "${file.originalname}" (${file.size} bytes)`);
+      console.log(`--- [1. TEXTO BRUTO EXTRAÍDO VIA PDF-PARSE (Amostra)] ---`);
+      if (pdfText) {
+        console.log(pdfText.length > 5000 ? `${pdfText.substring(0, 5000)}\n... [restante do texto truncado no log: total ${pdfText.length} chars]` : pdfText);
+      } else {
+        console.log("(Nenhum texto foi extraído pelo pdf-parse - PDF pode ser baseado em imagem ou protegido)");
+      }
+      console.log(`----------------------------------------------------------------`);
     } catch (pdfErr) {
-      console.warn("Aviso ao extrair texto do PDF com pdf-parse:", pdfErr);
+      console.warn("[PDF EXTRACTION] Aviso ao extrair texto do PDF com pdf-parse:", pdfErr);
     }
 
     const base64Pdf = file.buffer.toString("base64");
-    const mimeType = file.mimetype || "application/pdf";
+    const mimeType = "application/pdf";
 
     let extractedData: any = null;
 
     // 2. Gemini AI analysis with custom key header support & multimodal inlineData PDF
     const ai = getGeminiClient(req);
     if (ai) {
-      const prompt = `Você é um assistente especialista em análise jurídica e financeira de contratos comerciais e de intermediação esportiva brasileiros (MMB Sports).
-Analise com ATENÇÃO TOTAL o documento de contrato fornecido em PDF e extraia os dados exatamente como constam no documento.
+      const prompt = `Você é um analista especialista em auditoria e análise de contratos de futebol e intermediação esportiva da MMB Sports.
+Analise com ATENÇÃO TOTAL todas as páginas do documento PDF fornecido em anexo e extraia as informações EXATAMENTE como constam no contrato.
 
-${pdfText ? `TEXTO EXTRAÍDO DO PDF:\n"""\n${pdfText.substring(0, 15000)}\n"""\n` : ''}
+${pdfText && pdfText.length > 50 ? `TEXTO EXTRAÍDO DO PDF PARA CONFERÊNCIA:\n"""\n${pdfText.substring(0, 20000)}\n"""\n` : ''}
 
-REGRAS RÍGIDAS DE EXTRAÇÃO PARA OS 6 CAMPOS PRINCIPAIS:
+REGRAS RÍGIDAS DE PREENCHIMENTO DOS 6 CAMPOS PRINCIPAIS:
 
 1. CLUBE ("clube"):
-   - Extraia o Nome do Clube de futebol / Agremiação Esportiva (ex: CR Flamengo, SE Palmeiras, Fluminense FC, Santos FC, Grêmio FBPA).
+   - Nome oficial do Clube de Futebol ou Agremiação Esportiva participante, contratante ou objeto da intermediação (Ex: CR Flamengo, SE Palmeiras, São Paulo FC, Fluminense, Santos FC, Grêmio, Athletico Paranaense, Chelsea FC, etc.).
+   - Se o documento trouxer o nome do atleta colado ao clube (ex: "Flamengo - Gabigol"), coloque AQUI APENAS "CR Flamengo".
    - NUNCA inclua o nome do atleta neste campo.
-   - Se o cliente for uma empresa intermediária mas o contrato for relativo a um clube, extraia o nome do clube de futebol aqui.
 
 2. ATLETA ("atleta"):
-   - Extraia o Nome do Atleta / Jogador de Futebol objeto do contrato ou da intermediação (ex: Gabriel Barbosa, Dudu, Jhon Arias).
-   - Se o nome do atleta estiver junto com o clube no documento (ex: "Flamengo - Gabigol"), SEPARE e informe APENAS o atleta aqui.
+   - Nome completo ou nome profissional do Atleta / Jogador de Futebol mencionado no contrato (Ex: Gabriel Barbosa, Eduardo Pereira Rodrigues (Dudu), Jhon Arias, etc.).
+   - NUNCA coloque o nome do clube ou empresa no campo do atleta.
+   - Se o contrato for institucional sem atleta específico, coloque "Geral".
 
-3. VALOR DA COMISSÃO ("valorComissao") E DO CONTRATO ("valorBaseContrato"):
-   - "valorComissao": VALOR TOTAL CHEIO em R$ da comissão devida à MMB Sports. Se o contrato mencionar "3 parcelas de R$ 50.000,00", o valorComissao TOTAL É A SOMA TOTAL (150000.00). NUNCA informe apenas o valor de 1 parcela no valorComissao total.
-   - "valorBaseContrato": Valor bruto global do contrato/transação/transferência/patrocínio em R$ (ex: 1500000.00).
+3. VALOR DA COMISSÃO ("valorComissao") E DO CONTRATO ("valorBaseContrato", "percentualComissao"):
+   - "valorComissao": VALOR TOTAL GLOBAL DA COMISSÃO devida em R$ (número decimal puro, ex: 150000.00). 
+     * ATENÇÃO CRÍTICA: Se o contrato especifica que a comissão será paga em parcelas (ex: "3 parcelas de R$ 50.000,00" ou "6x de R$ 25.000,00"), o "valorComissao" É A SOMA TOTAL DE TODAS AS PARCELAS (150000.00). JAMAIS informe apenas o valor de 1 parcela no valorComissao total!
+   - "valorBaseContrato": Valor global/bruto do contrato de trabalho, transferência, patrocínio ou transação em R$ (ex: 1500000.00).
    - "percentualComissao": Percentual de comissão acordado (ex: 10.0 para 10%).
 
-4. PARCELAS E PARCELAMENTO ("eParcelado", "numeroParcelas", "parcelas"):
-   - "eParcelado": true se houver 2 ou mais parcelas; false se for pagamento único/à vista.
-   - "numeroParcelas": Quantidade total de parcelas (ex: 1, 2, 3, 4, 6, 12...).
-   - "parcelas": Lista de objetos de cada parcela especificada no contrato:
+4. PARCELAS ("eParcelado", "numeroParcelas", "parcelas"):
+   - "eParcelado": boolean (true se houver 2 ou mais parcelas; false se for pagamento único/à vista).
+   - "numeroParcelas": Número total de parcelas (ex: 1, 2, 3, 4, 6, 12, 24...).
+   - "parcelas": Array com todas as parcelas detalhadas na cláusula de pagamento ou tabela do contrato:
+     cada objeto contendo:
      - "numeroParcela": 1, 2, 3...
      - "valorParcela": valor numérico em R$ de CADA parcela (ex: 50000.00)
-     - "dataVencimento": data de vencimento da parcela no formato YYYY-MM-DD (ex: 2026-02-15)
-     - "descricao": descrição sucinta da parcela (ex: "Parcela 1/3")
+     - "dataVencimento": data de vencimento da parcela no formato "YYYY-MM-DD"
+     - "descricao": descrição (ex: "1ª Parcela", "2ª Parcela")
 
-5. DATA DE INÍCIO DAS NOTAS / VENCIMENTO DA 1ª NF ("dataVencimentoNF"):
-   - Data do vencimento ou emissão prevista para a PRIMEIRA Nota Fiscal / 1ª Parcela no formato YYYY-MM-DD (ex: 2026-02-15).
-   - Se houver parcelamento, esta data DEVE ser idêntica à data de vencimento da 1ª parcela.
+5. DATA DE INÍCIO DAS NOTAS FISCAIS / VENCIMENTO DA 1ª NF ("dataVencimentoNF"):
+   - Data de vencimento ou prazo limite da PRIMEIRA Nota Fiscal / 1ª Parcela no formato "YYYY-MM-DD" (ex: "2026-02-15").
+   - Se houver parcelamento, a "dataVencimentoNF" DEVE ser rigorosamente igual à data de vencimento da 1ª parcela.
 
 6. DATA DO CONTRATO ("dataContrato"):
-   - Data de celebração, assinatura ou início de vigência do contrato no formato YYYY-MM-DD (ex: 2026-01-20).`;
+   - Data de celebração, assinatura ou início de vigência do contrato no formato "YYYY-MM-DD" (ex: "2026-01-20").
+
+CAMPOS COMPLEMENTARES:
+- "numeroContrato": Identificador do contrato/código (ex: "CT-2026/01" ou número da página de rosto).
+- "clienteNome": Nome/Razão Social do Contratante/Pagador (se for o próprio clube, coloque o nome do clube; se for uma empresa/agência pagadora, coloque a razão social da empresa).
+- "tipoContrato": Tipo do contrato (ex: "Intermediação de Transferência", "Renovação Contratual", "Representação Esportiva", "Direitos de Imagem", "Patrocínio").
+- "clienteCnpjCpf": CNPJ ou CPF do contratante pagador com pontuação se disponível.
+- "servicoDescricao": Descrição concisa do serviço ou objeto do contrato.
+- "observacoes": Resumo claro das condições e prazos de pagamento estipulados no contrato.`;
 
       const responseSchema = {
         type: Type.OBJECT,
@@ -210,12 +229,13 @@ REGRAS RÍGIDAS DE EXTRAÇÃO PARA OS 6 CAMPOS PRINCIPAIS:
                 valorParcela: { type: Type.NUMBER },
                 dataVencimento: { type: Type.STRING },
                 descricao: { type: Type.STRING }
-              }
+              },
+              required: ["numeroParcela", "valorParcela", "dataVencimento"]
             }
           },
           observacoes: { type: Type.STRING },
         },
-        required: ["clienteNome"],
+        required: ["clienteNome", "clube", "atleta", "valorComissao", "dataContrato", "dataVencimentoNF"],
       };
 
       try {
@@ -240,15 +260,17 @@ REGRAS RÍGIDAS DE EXTRAÇÃO PARA OS 6 CAMPOS PRINCIPAIS:
         });
 
         if (response.text) {
+          console.log(`--- [2. RESPOSTA JSON BRUTA GERADA PELO GEMINI (Antes do Parse)] ---`);
+          console.log(response.text);
+          console.log(`-------------------------------------------------------------------`);
+
           extractedData = JSON.parse(response.text);
-          console.log("Sucesso no Gemini PDF multimodal. Dados extraídos:", {
-            clube: extractedData.clube,
-            atleta: extractedData.atleta,
-            valorComissao: extractedData.valorComissao,
-            numeroParcelas: extractedData.numeroParcelas,
-            dataContrato: extractedData.dataContrato,
-            dataVencimentoNF: extractedData.dataVencimentoNF
-          });
+
+          console.log(`--- [3. DADOS EXTRAÍDOS E ESTRUTURADOS COM SUCESSO] ---`);
+          console.log(JSON.stringify(extractedData, null, 2));
+          console.log(`===================================================================\n`);
+        } else {
+          console.warn("[GEMINI RESPONSE WARNING] A resposta do modelo Gemini veio vazia (sem response.text).");
         }
       } catch (geminiErr) {
         console.warn("Aviso na análise multimodal do PDF com Gemini:", geminiErr);
