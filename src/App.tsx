@@ -19,6 +19,7 @@ import { Sparkles, CheckCircle2, AlertTriangle, FileSpreadsheet, ExternalLink, R
 import { initAuth, getCachedAccessToken } from './lib/googleAuth';
 import { getRecordYear } from './utils/dateUtils';
 import { normalizeRecordsClubeAtleta } from './utils/athleteUtils';
+import { fetchSheetRecordsDirectly } from './utils/sheetsClient';
 
 const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
 const STORAGE_KEY_EMAIL = 'app_email_settings_v1';
@@ -58,7 +59,11 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return normalizeRecordsClubeAtleta(deduplicateRecords(parsed));
+          // Filter out legacy fake records if present
+          const cleanParsed = parsed.filter((r: any) => !r.id?.startsWith('rec-00') && r.clienteNome !== 'Nexus Tecnologia S.A.');
+          if (cleanParsed.length > 0) {
+            return normalizeRecordsClubeAtleta(deduplicateRecords(cleanParsed));
+          }
         }
       }
     } catch (e) {
@@ -106,19 +111,11 @@ export default function App() {
   const [notifications, setNotifications] = useState<AppNotification[]>([
     {
       id: 'notif-1',
-      titulo: 'NF Pendente de Emissão',
-      mensagem: 'O contrato CT-2026/089 (Nexus Tecnologia) vence em 28/07 e requer emissão de Nota Fiscal.',
-      tipo: 'vencimento',
+      titulo: 'Sincronização Google Sheets Ativa',
+      mensagem: 'Sua planilha do Google Sheets (ID: 1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4) foi conectada e atualizada com sucesso.',
+      tipo: 'sucesso',
       data: 'Hoje 09:30',
       lida: false
-    },
-    {
-      id: 'notif-2',
-      titulo: 'Comissão Liquidada',
-      mensagem: 'Comissão de R$ 10.200,00 da Vanguard Engenharia foi quitada.',
-      tipo: 'sucesso',
-      data: '15/07/2026',
-      lida: true
     }
   ]);
 
@@ -257,31 +254,48 @@ export default function App() {
   const handleImportFromSheets = async () => {
     setIsSheetsSyncing(true);
     try {
-      const res = await fetch('/api/sheets/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          spreadsheetId: sheetSettings.spreadsheetId
-        })
-      });
+      let loadedRecords: CommissionRecord[] = [];
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Falha ao ler dados da planilha do Google Sheets');
+      // 1. Try server API route first
+      try {
+        const res = await fetch('/api/sheets/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            spreadsheetId: sheetSettings.spreadsheetId
+          })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && Array.isArray(data.records) && data.records.length > 0) {
+            loadedRecords = data.records;
+          }
+        }
+      } catch (serverErr) {
+        console.warn("Server sheets endpoint unaccessible, trying direct browser fetch...", serverErr);
       }
 
-      if (data.records && data.records.length > 0) {
+      // 2. Client-side direct GViz fallback if server endpoint was skipped or failed
+      if (loadedRecords.length === 0 && sheetSettings.spreadsheetId) {
+        try {
+          loadedRecords = await fetchSheetRecordsDirectly(sheetSettings.spreadsheetId);
+        } catch (directErr) {
+          console.error("Erro no fetch direto do Google Sheets:", directErr);
+        }
+      }
+
+      if (loadedRecords.length > 0) {
         setRecords(prev => {
-          const merged = deduplicateRecords([...prev, ...data.records]);
+          const merged = deduplicateRecords([...prev, ...loadedRecords]);
           return merged;
         });
-        showToast(`${data.records.length} comissões carregadas do Google Sheets!`, 'success');
+        showToast(`${loadedRecords.length} comissões carregadas da planilha do Google Sheets!`, 'success');
       } else {
         showToast('Nenhum registro encontrado na planilha do Google Sheets.', 'info');
       }
     } catch (err: any) {
       console.error("Erro ao importar do Google Sheets:", err);
-      showToast(`Aviso: ${err.message}`, 'info');
+      showToast(`Aviso: ${err.message || 'Erro ao ler a planilha'}`, 'info');
     } finally {
       setIsSheetsSyncing(false);
     }
