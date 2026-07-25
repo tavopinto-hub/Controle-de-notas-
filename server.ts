@@ -53,11 +53,14 @@ app.post("/api/contracts/analyze", upload.single("pdfFile"), async (req, res) =>
       return res.status(400).json({ error: "Nenhum arquivo PDF foi enviado." });
     }
 
-    // 1. Extract raw text from PDF using pdf-parse
+    // 1. Extract raw text from PDF using pdf-parse safely
     let pdfText = "";
     try {
-      const pdfData = await pdfParse(file.buffer);
-      pdfText = pdfData?.text || "";
+      const parseFunc = typeof pdfParse === "function" ? pdfParse : (pdfParse?.default || pdfParse?.PDFParse);
+      if (typeof parseFunc === "function") {
+        const pdfData = await parseFunc(file.buffer);
+        pdfText = pdfData?.text || "";
+      }
       console.log(`PDF parse extracted ${pdfText.length} characters from ${file.originalname}`);
     } catch (pdfErr) {
       console.warn("Aviso ao extrair texto direto do PDF com pdf-parse:", pdfErr);
