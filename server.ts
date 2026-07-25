@@ -229,37 +229,69 @@ CAMPOS COMPLEMENTARES:
                 valorParcela: { type: Type.NUMBER },
                 dataVencimento: { type: Type.STRING },
                 descricao: { type: Type.STRING }
-              },
-              required: ["numeroParcela", "valorParcela", "dataVencimento"]
+              }
             }
           },
           observacoes: { type: Type.STRING },
-        },
-        required: ["clienteNome", "clube", "atleta", "valorComissao", "dataContrato", "dataVencimentoNF"],
+        }
       };
 
       try {
         console.log(`Analisando contrato PDF (${file.originalname}, ${file.size} bytes) via Gemini 3.6 Flash multimodal...`);
-        const response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
-          contents: [
-            {
-              inlineData: {
-                mimeType,
-                data: base64Pdf,
-              },
+        
+        let response: any = null;
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: base64Pdf,
+                    },
+                  },
+                  {
+                    text: prompt,
+                  },
+                ],
+              }
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema,
             },
-            {
-              text: prompt,
+          });
+        } catch (mErr: any) {
+          console.warn("Tentando alias alternativo gemini-flash-latest devido a erro com gemini-3.6-flash:", mErr?.message || mErr);
+          response = await ai.models.generateContent({
+            model: "gemini-flash-latest",
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType,
+                      data: base64Pdf,
+                    },
+                  },
+                  {
+                    text: prompt,
+                  },
+                ],
+              }
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema,
             },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema,
-          },
-        });
+          });
+        }
 
-        if (response.text) {
+        if (response && response.text) {
           console.log(`--- [2. RESPOSTA JSON BRUTA GERADA PELO GEMINI (Antes do Parse)] ---`);
           console.log(response.text);
           console.log(`-------------------------------------------------------------------`);
@@ -272,8 +304,9 @@ CAMPOS COMPLEMENTARES:
         } else {
           console.warn("[GEMINI RESPONSE WARNING] A resposta do modelo Gemini veio vazia (sem response.text).");
         }
-      } catch (geminiErr) {
-        console.warn("Aviso na análise multimodal do PDF com Gemini:", geminiErr);
+      } catch (geminiErr: any) {
+        console.error("❌ ERRO na análise do PDF com a IA Gemini:", geminiErr?.message || geminiErr);
+        if (geminiErr?.stack) console.error(geminiErr.stack);
       }
     }
 

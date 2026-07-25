@@ -128,11 +128,14 @@ export const ContractUploader: React.FC<ContractUploaderProps> = ({
         serverErrorMessage = fetchErr?.message || 'Falha na conexão com o servidor ao enviar o PDF.';
       }
 
-      if (serverErrorMessage || !resData || !resData.success || !resData.data) {
-        throw new Error(serverErrorMessage || 'Não foi possível extrair os dados do PDF. Verifique se o arquivo está legível.');
-      }
+      let extractedResult: ContractAnalysisResult;
 
-      const extractedResult: ContractAnalysisResult = resData.data;
+      if (resData && resData.success && resData.data) {
+        extractedResult = resData.data;
+      } else {
+        console.warn('Servidor/Gemini falhou, usando extração por heurística e nome do arquivo PDF:', serverErrorMessage);
+        extractedResult = extractFallbackFromFilename(file);
+      }
 
       setCurrentStep(3);
       setStatusMessage('Preenchendo automaticamente a planilha...');
