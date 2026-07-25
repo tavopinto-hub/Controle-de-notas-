@@ -107,6 +107,200 @@ function normalizeToIsoDate(dateStr: any): string {
   return '';
 }
 
+function parseMoneyValue(str: any): number {
+  if (typeof str === 'number') return isNaN(str) ? 0 : str;
+  if (!str) return 0;
+  const cleaned = String(str).replace(/R\$\s*/gi, "").replace(/\./g, "").replace(",", ".");
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+}
+
+function enrichAndNormalizeContractResult(extracted: any, textContent: string = ""): any {
+  const data = { ...(extracted || {}) };
+  const rawText = textContent || "";
+
+  // Helper for ISO date formatting
+  const toIso = (d: any) => normalizeToIsoDate(d);
+
+  // 1. Regex parsing for installments and money amounts in Portuguese text
+  let numParcelasRegex = 1;
+  let valParcelaFromText = 0;
+  let totalFromText = 0;
+
+  // Pattern A: "3 parcelas de R$ 50.000,00" or "6x de R$ 20.000" or "3 parcelas iguais de R$ 100.000"
+  const pMatch1 = rawText.match(/(\d+)\s*(?:x|vezes|parcelas|prestações)(?:\s+iguais)?\s*(?:e\s+sucessivas)?\s*(?:de)?\s*R\$\s*([\d\.\,]+)/i);
+  if (pMatch1) {
+    numParcelasRegex = parseInt(pMatch1[1], 10);
+    valParcelaFromText = parseMoneyValue(pMatch1[2]);
+  }
+
+  // Pattern B: "R$ 150.000,00 em 3 parcelas" or "R$ 300.000,00 divididos em 3 parcelas"
+  const pMatch2 = rawText.match(/R\$\s*([\d\.\,]+)\s*(?:em|dividid[oa]s?\s+em)?\s*(\d+)\s*(?:x|vezes|parcelas|prestações)/i);
+  if (pMatch2) {
+    totalFromText = parseMoneyValue(pMatch2[1]);
+    if (!pMatch1) {
+      numParcelasRegex = parseInt(pMatch2[2], 10);
+    }
+  }
+
+  // Pattern C: Portuguese word numbers ("3 parcelas", "três parcelas", "duas parcelas")
+  if (numParcelasRegex <= 1) {
+    const wordNumbers: Record<string, number> = {
+      duas: 2, três: 3, tres: 3, quatro: 4, cinco: 5,
+      seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, doze: 12, vinte: 20
+    };
+    for (const [w, n] of Object.entries(wordNumbers)) {
+      if (new RegExp(`${w}\\s+parcelas`, "i").test(rawText)) {
+        numParcelasRegex = n;
+        break;
+      }
+    }
+    if (numParcelasRegex <= 1) {
+      const simpleNum = rawText.match(/(\d+)\s*(?:x|parcelas|vezes|prestações)/i);
+      if (simpleNum && parseInt(simpleNum[1], 10) > 1) {
+        numParcelasRegex = parseInt(simpleNum[1], 10);
+      }
+    }
+  }
+
+  // Extract all monetary figures (R$) in text
+  const allMoney = (rawText.match(/R\$\s*[\d\.\,]+/gi) || []).map(parseMoneyValue).filter(n => n > 0);
+
+  if (valParcelaFromText > 0 && numParcelasRegex > 1) {
+    totalFromText = valParcelaFromText * numParcelasRegex;
+  } else if (totalFromText > 0 && numParcelasRegex > 1 && valParcelaFromText === 0) {
+    valParcelaFromText = Math.round((totalFromText / numParcelasRegex) * 100) / 100;
+  } else if (allMoney.length > 0 && totalFromText === 0) {
+    totalFromText = Math.max(...allMoney);
+  }
+
+  // Determine final number of installments
+  const finalNumParcelas = Math.max(
+    data.numeroParcelas || 1,
+    data.parcelas?.length || 1,
+    numParcelasRegex || 1
+  );
+
+  const isParcelado = finalNumParcelas > 1 || data.eParcelado === true;
+  data.eParcelado = isParcelado;
+  data.numeroParcelas = isParcelado ? finalNumParcelas : 1;
+
+  // Determine final total commission value
+  let currentValComissao = parseMoneyValue(data.valorComissao);
+
+  // Reconcile: If current value is equal to single installment value (e.g. 50000) when total is 150000, fix it!
+  if (isParcelado && totalFromText > 0 && valParcelaFromText > 0) {
+    if (currentValComissao <= 0 || Math.abs(currentValComissao - valParcelaFromText) < 1) {
+      currentValComissao = totalFromText;
+    }
+  } else if (currentValComissao <= 0) {
+    if (totalFromText > 0) {
+      currentValComissao = totalFromText;
+    } else if (allMoney.length > 0) {
+      currentValComissao = Math.max(...allMoney);
+    } else if (data.valorBaseContrato && data.percentualComissao) {
+      currentValComissao = Math.round(((data.valorBaseContrato * data.percentualComissao) / 100) * 100) / 100;
+    } else if (data.valorBaseContrato) {
+      currentValComissao = Math.round((data.valorBaseContrato * 0.1) * 100) / 100;
+    }
+  }
+
+  data.valorComissao = currentValComissao;
+
+  // Extract dates from text if missing or invalid
+  let dataContratoIso = toIso(data.dataContrato);
+  let dataVencimentoNfIso = toIso(data.dataVencimentoNF);
+
+  const lines = rawText.split("\n");
+  for (const line of lines) {
+    const dMatch = line.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/);
+    if (dMatch) {
+      const [_, dd, mm, yyyy] = dMatch;
+      const iso = `${yyyy}-${mm}-${dd}`;
+      if (/vencimento|1ª|1a|nota fiscal|nf|primeira/i.test(line) && !dataVencimentoNfIso) {
+        dataVencimentoNfIso = iso;
+      }
+      if (/contrato|celebr|firmad|data/i.test(line) && !dataContratoIso) {
+        dataContratoIso = iso;
+      }
+    }
+  }
+
+  const allIsoDates = (rawText.match(/(\d{2})[\/\-](\d{2})[\/\-](\d{4})/g) || []).map(d => {
+    const [dd, mm, yyyy] = d.replace(/\-/g, "/").split("/");
+    return `${yyyy}-${mm}-${dd}`;
+  });
+
+  if (!dataContratoIso && allIsoDates.length > 0) dataContratoIso = allIsoDates[0];
+  if (!dataVencimentoNfIso && allIsoDates.length > 0) {
+    dataVencimentoNfIso = allIsoDates.length > 1 ? allIsoDates[1] : allIsoDates[0];
+  }
+
+  const todayIso = new Date().toISOString().split("T")[0];
+  data.dataContrato = dataContratoIso || todayIso;
+  data.dataVencimentoNF = dataVencimentoNfIso || todayIso;
+
+  // Build / Fix parcelas array
+  if (isParcelado && data.numeroParcelas > 1) {
+    const nP = data.numeroParcelas;
+    const existingParcelas = Array.isArray(data.parcelas) ? data.parcelas : [];
+
+    const basePVal = Math.floor((data.valorComissao / nP) * 100) / 100;
+    const diffCent = Math.round((data.valorComissao - (basePVal * nP)) * 100) / 100;
+
+    let [vYear, vMonth, vDay] = (data.dataVencimentoNF || todayIso).split("-").map(Number);
+    if (isNaN(vYear) || isNaN(vMonth) || isNaN(vDay)) {
+      const now = new Date();
+      vYear = now.getFullYear();
+      vMonth = now.getMonth() + 1;
+      vDay = 15;
+    }
+
+    const parcelasGenerated = [];
+    for (let i = 1; i <= nP; i++) {
+      const existingP = existingParcelas.find((p: any) => p.numeroParcela === i) || existingParcelas[i - 1];
+
+      let pVal = existingP?.valorParcela && existingP.valorParcela > 0
+        ? existingP.valorParcela
+        : (valParcelaFromText > 0 ? valParcelaFromText : (i === nP ? Math.round((basePVal + diffCent) * 100) / 100 : basePVal));
+
+      let pDate = toIso(existingP?.dataVencimento);
+      if (!pDate || !/^\d{4}-\d{2}-\d{2}$/.test(pDate)) {
+        const dt = new Date(vYear, (vMonth - 1) + (i - 1), vDay || 10);
+        const yyyy = dt.getFullYear();
+        const mm = String(dt.getMonth() + 1).padStart(2, "0");
+        const dd = String(dt.getDate()).padStart(2, "0");
+        pDate = `${yyyy}-${mm}-${dd}`;
+      }
+
+      parcelasGenerated.push({
+        numeroParcela: i,
+        valorParcela: pVal,
+        dataVencimento: pDate,
+        descricao: existingP?.descricao || `${i}ª Parcela (${i}/${nP})`
+      });
+    }
+
+    data.parcelas = parcelasGenerated;
+    data.dataVencimentoNF = parcelasGenerated[0].dataVencimento;
+  } else {
+    // Single payment
+    data.parcelas = [{
+      numeroParcela: 1,
+      valorParcela: data.valorComissao,
+      dataVencimento: data.dataVencimentoNF,
+      descricao: "Parcela Única (1/1)"
+    }];
+  }
+
+  // Fallbacks for clube / atleta / cliente
+  if (!data.clube) data.clube = data.clienteNome || "Clube Identificado";
+  if (!data.atleta) data.atleta = "-";
+  if (!data.clienteNome) data.clienteNome = data.clube;
+
+  return data;
+}
+
 // Endpoint: Analyze PDF Contract using Gemini AI & pdf-parse fallback
 app.post("/api/contracts/analyze", (req, res, next) => {
   upload.single("pdfFile")(req, res, (err) => {
@@ -460,6 +654,8 @@ CAMPOS COMPLEMENTARES:
       }
     }
 
+    extractedData = enrichAndNormalizeContractResult(extractedData, pdfText);
+
     return res.json({
       success: true,
       data: extractedData,
@@ -472,6 +668,267 @@ CAMPOS COMPLEMENTARES:
       error: "Ocorreu um erro ao processar este PDF.",
       details: error.message || String(error)
     });
+  }
+});
+
+// Endpoint para processamento e reconhecimento direto de texto colado do contrato
+app.post("/api/contracts/analyze-text", express.json({ limit: "10mb" }), async (req: express.Request, res: express.Response) => {
+  try {
+    const { contractText } = req.body || {};
+    if (!contractText || typeof contractText !== "string" || !contractText.trim()) {
+      return res.status(400).json({ error: "Nenhum texto de contrato foi fornecido para análise." });
+    }
+
+    const trimmedText = contractText.trim();
+    console.log(`\n==================== [TEXT ANALYZE ENDPOINT] ====================`);
+    console.log(`[TEXT EXTRACTION] Recebido texto do contrato com ${trimmedText.length} caracteres.`);
+
+    let extractedData: any = null;
+
+    const ai = getGeminiClient(req);
+    if (ai) {
+      const prompt = `Você é um analista especialista em auditoria e análise de contratos de futebol e intermediação esportiva da MMB Sports.
+Analise com ATENÇÃO TOTAL o texto do contrato fornecido abaixo e extraia as informações EXATAMENTE como constam no documento.
+
+TEXTO DO CONTRATO FORNECIDO:
+"""
+${trimmedText.substring(0, 30000)}
+"""
+
+REGRAS RÍGIDAS DE PREENCHIMENTO DOS CAMPOS PRINCIPAIS:
+
+1. CLUBE ("clube"):
+   - Nome oficial do Clube de Futebol ou Agremiação Esportiva participante, contratante ou objeto da intermediação (Ex: CR Flamengo, SE Palmeiras, São Paulo FC, Fluminense, Santos FC, Grêmio, Athletico Paranaense, Chelsea FC, etc.).
+   - Se o documento trouxer o nome do atleta colado ao clube (ex: "Flamengo - Gabigol"), coloque AQUI APENAS "CR Flamengo".
+   - NUNCA inclua o nome do atleta neste campo.
+
+2. ATLETA ("atleta"):
+   - Nome completo ou nome profissional do Atleta / Jogador de Futebol mencionado no contrato (Ex: Gabriel Barbosa, Eduardo Pereira Rodrigues (Dudu), Jhon Arias, etc.).
+   - NUNCA coloque o nome do clube ou empresa no campo do atleta.
+   - Se o contrato for institucional sem atleta específico, coloque "Geral".
+
+3. VALOR DA COMISSÃO ("valorComissao") E DO CONTRATO ("valorBaseContrato", "percentualComissao"):
+   - "valorComissao": VALOR TOTAL GLOBAL DA COMISSÃO devida em R$ (número decimal puro, ex: 150000.00). 
+     * ATENÇÃO CRÍTICA: Se o contrato especifica que a comissão será paga em parcelas (ex: "3 parcelas de R$ 50.000,00" ou "6x de R$ 25.000,00"), o "valorComissao" É A SOMA TOTAL DE TODAS AS PARCELAS (150000.00). JAMAIS informe apenas o valor de 1 parcela no valorComissao total!
+   - "valorBaseContrato": Valor global/bruto do contrato de trabalho, transferência, patrocínio ou transação em R$ (ex: 1500000.00).
+   - "percentualComissao": Percentual de comissão acordado (ex: 10.0 para 10%).
+
+4. PARCELAS ("eParcelado", "numeroParcelas", "parcelas"):
+   - "eParcelado": boolean (true se houver 2 ou mais parcelas; false se for pagamento único/à vista).
+   - "numeroParcelas": Número total de parcelas (ex: 1, 2, 3, 4, 6, 12, 24...).
+   - "parcelas": Array com todas as parcelas detalhadas na cláusula de pagamento ou tabela do contrato:
+     cada objeto contendo:
+     - "numeroParcela": 1, 2, 3...
+     - "valorParcela": valor numérico em R$ de CADA parcela (ex: 50000.00)
+     - "dataVencimento": data de vencimento da parcela no formato "YYYY-MM-DD"
+     - "descricao": descrição (ex: "1ª Parcela", "2ª Parcela")
+
+5. DATA DE INÍCIO DAS NOTAS FISCAIS / VENCIMENTO DA 1ª NF ("dataVencimentoNF"):
+   - Data de vencimento ou prazo limite da PRIMEIRA Nota Fiscal / 1ª Parcela no formato "YYYY-MM-DD" (ex: "2026-02-15").
+   - Se houver parcelamento, a "dataVencimentoNF" DEVE ser rigorosamente igual à data de vencimento da 1ª parcela.
+
+6. DATA DO CONTRATO ("dataContrato"):
+   - Data de celebração, assinatura ou início de vigência do contrato no formato "YYYY-MM-DD" (ex: "2026-01-20").
+
+CAMPOS COMPLEMENTARES:
+- "numeroContrato": Identificador do contrato/código (ex: "CT-2026/01").
+- "clienteNome": Nome/Razão Social do Contratante/Pagador.
+- "tipoContrato": Tipo do contrato (ex: "Intermediação de Transferência", "Renovação Contratual").
+- "clienteCnpjCpf": CNPJ ou CPF do contratante.
+- "servicoDescricao": Descrição do serviço.
+- "observacoes": Resumo claro das condições e prazos de pagamento.`;
+
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          numeroContrato: { type: Type.STRING },
+          clienteNome: { type: Type.STRING },
+          clube: { type: Type.STRING },
+          atleta: { type: Type.STRING },
+          tipoContrato: { type: Type.STRING },
+          dataContrato: { type: Type.STRING },
+          numeroNF: { type: Type.STRING },
+          clienteCnpjCpf: { type: Type.STRING },
+          servicoDescricao: { type: Type.STRING },
+          valorBaseContrato: { type: Type.NUMBER },
+          percentualComissao: { type: Type.NUMBER },
+          valorComissao: { type: Type.NUMBER },
+          dataVencimentoNF: { type: Type.STRING },
+          eParcelado: { type: Type.BOOLEAN },
+          numeroParcelas: { type: Type.INTEGER },
+          parcelas: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                numeroParcela: { type: Type.INTEGER },
+                valorParcela: { type: Type.NUMBER },
+                dataVencimento: { type: Type.STRING },
+                descricao: { type: Type.STRING }
+              }
+            }
+          },
+          observacoes: { type: Type.STRING },
+        }
+      };
+
+      try {
+        let response: any = null;
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: prompt }]
+              }
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema
+            }
+          });
+        } catch (mErr: any) {
+          console.warn("Aviso ao chamar gemini-3.6-flash para texto, tentando alias fallback:", mErr?.message || mErr);
+          response = await ai.models.generateContent({
+            model: "gemini-flash-latest",
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: prompt }]
+              }
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema
+            }
+          });
+        }
+
+        if (response && response.text) {
+          console.log(`--- [2. RESPOSTA BRUTA GEMINI PARA TEXTO COLADO] ---`);
+          console.log(response.text);
+          extractedData = JSON.parse(response.text);
+        }
+      } catch (geminiErr: any) {
+        console.error("❌ ERRO na análise do texto colado com Gemini:", geminiErr?.message || geminiErr);
+      }
+    }
+
+    // Heuristics fallback if Gemini didn't extract structured data
+    if (!extractedData || !extractedData.clienteNome) {
+      console.log("Executando extração por heurística regex no texto colado...");
+      const cnpjMatch = trimmedText.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/) || trimmedText.match(/\d{3}\.\d{3}\.\d{3}-\d{2}/);
+      const moneyMatches = trimmedText.match(/R\$\s*[\d\.\,]+/gi) || [];
+      let parsedValues: number[] = [];
+      moneyMatches.forEach(m => {
+        const cleaned = m.replace(/R\$\s*/i, '').replace(/\./g, '').replace(',', '.');
+        const num = parseFloat(cleaned);
+        if (!isNaN(num) && num > 0) parsedValues.push(num);
+      });
+
+      const maxVal = parsedValues.length > 0 ? Math.max(...parsedValues) : 50000;
+      const dateMatch = trimmedText.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+      let dataVencFormatted = new Date().toISOString().split("T")[0];
+      if (dateMatch) {
+        const [_, dd, mm, yyyy] = dateMatch;
+        dataVencFormatted = `${yyyy}-${mm}-${dd}`;
+      }
+
+      extractedData = {
+        numeroContrato: `CT-${Math.floor(1000 + Math.random() * 9000)}`,
+        clienteNome: "Cliente / Contratante",
+        clube: "Clube Extraído",
+        atleta: "-",
+        tipoContrato: "Intermediação / Prestação de Serviços",
+        dataContrato: new Date().toISOString().split("T")[0],
+        numeroNF: "A EMITIR",
+        clienteCnpjCpf: cnpjMatch ? cnpjMatch[0] : "",
+        servicoDescricao: "Prestação de Serviços de Intermediação Esportiva",
+        valorBaseContrato: maxVal * 10,
+        percentualComissao: 10.0,
+        valorComissao: maxVal,
+        dataVencimentoNF: dataVencFormatted,
+        eParcelado: false,
+        numeroParcelas: 1,
+        observacoes: "Texto do contrato analisado via heurística."
+      };
+    }
+
+    // Normalization
+    extractedData.dataContrato = normalizeToIsoDate(extractedData.dataContrato);
+    extractedData.dataVencimentoNF = normalizeToIsoDate(extractedData.dataVencimentoNF);
+
+    if (Array.isArray(extractedData.parcelas)) {
+      extractedData.parcelas = extractedData.parcelas.map((p: any) => ({
+        ...p,
+        dataVencimento: normalizeToIsoDate(p.dataVencimento)
+      }));
+    }
+
+    // Generate parcelas array if eParcelado or numeroParcelas > 1
+    const totalParcelas = extractedData.numeroParcelas || (extractedData.parcelas?.length) || (extractedData.eParcelado ? 2 : 1);
+    if (totalParcelas > 1 || extractedData.eParcelado) {
+      extractedData.eParcelado = true;
+      extractedData.numeroParcelas = Math.min(Math.max(totalParcelas, 1), 120);
+
+      const totalComissao = Math.round((extractedData.valorComissao || 0) * 100) / 100;
+      const valorBaseParcela = Math.floor((totalComissao / totalParcelas) * 100) / 100;
+      const diffRounding = Math.round((totalComissao - (valorBaseParcela * totalParcelas)) * 100) / 100;
+
+      const existingParcelas = extractedData.parcelas || [];
+      
+      let [vYear, vMonth, vDay] = (extractedData.dataVencimentoNF || '').split('-').map(Number);
+      if (isNaN(vYear) || isNaN(vMonth) || isNaN(vDay)) {
+        const now = new Date();
+        vYear = now.getFullYear();
+        vMonth = now.getMonth() + 1;
+        vDay = 10;
+      }
+
+      const parcelasGenerated = [];
+      for (let i = 1; i <= extractedData.numeroParcelas; i++) {
+        const existingP = existingParcelas.find((p: any) => p.numeroParcela === i);
+        
+        let pVal = existingP?.valorParcela;
+        if (!pVal || isNaN(pVal) || pVal <= 0) {
+          pVal = i === 1 ? (valorBaseParcela + diffRounding) : valorBaseParcela;
+        }
+
+        let dateStr = existingP?.dataVencimento;
+        if (!dateStr) {
+          const calcMonth = vMonth - 1 + (i - 1);
+          const pDate = new Date(vYear, calcMonth, vDay);
+          dateStr = pDate.toISOString().split('T')[0];
+        }
+
+        parcelasGenerated.push({
+          numeroParcela: i,
+          valorParcela: pVal,
+          dataVencimento: dateStr,
+          descricao: existingP?.descricao || `Parcela ${i}/${extractedData.numeroParcelas}`
+        });
+      }
+
+      extractedData.parcelas = parcelasGenerated;
+      if (parcelasGenerated.length > 0 && parcelasGenerated[0].dataVencimento) {
+        extractedData.dataVencimentoNF = parcelasGenerated[0].dataVencimento;
+      }
+    }
+
+    if (!extractedData.clube) extractedData.clube = extractedData.clienteNome || "Clube Não Identificado";
+    if (!extractedData.atleta) extractedData.atleta = "-";
+    if (!extractedData.clienteNome) extractedData.clienteNome = extractedData.clube;
+
+    extractedData = enrichAndNormalizeContractResult(extractedData, trimmedText);
+
+    return res.json({
+      success: true,
+      data: extractedData
+    });
+  } catch (err: any) {
+    console.error("Erro no endpoint /api/contracts/analyze-text:", err);
+    return res.status(500).json({ error: "Erro interno ao processar texto do contrato.", details: err?.message });
   }
 });
 
