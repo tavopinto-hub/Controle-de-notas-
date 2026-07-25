@@ -59,7 +59,7 @@ app.post("/api/contracts/analyze", upload.single("pdfFile"), async (req, res) =>
       const parseFunc = typeof pdfParse === "function" ? pdfParse : (pdfParse?.default || pdfParse?.PDFParse);
       if (typeof parseFunc === "function") {
         const pdfData = await parseFunc(file.buffer);
-        pdfText = pdfData?.text || "";
+        pdfText = pdfData?.text ? pdfData.text.trim() : "";
       }
       console.log(`PDF parse extracted ${pdfText.length} characters from ${file.originalname}`);
     } catch (pdfErr) {
@@ -71,16 +71,13 @@ app.post("/api/contracts/analyze", upload.single("pdfFile"), async (req, res) =>
 
     let extractedData: any = null;
 
-    // 2. Try Gemini AI analysis using gemini-3.6-flash
+    // 2. Gemini AI analysis with two-stage strategy
     const ai = getGeminiClient();
     if (ai) {
-      try {
-        console.log(`Analyzing file ${file.originalname} (${file.size} bytes) with Gemini 3.6 Flash...`);
+      const prompt = `Você é um assistente especialista em análise jurídica e financeira de contratos comerciais e de intermediação esportiva brasileiros (MMB Sports).
+Analise com atenção o contrato de comissão / prestação de serviços fornecido e extraia os seguintes dados para o preenchimento automático da planilha de controle de Nota Fiscal e Comissão:
 
-        const prompt = `Você é um assistente especialista em análise jurídica e financeira de contratos comerciais e de intermediação esportiva brasileiros (MMB Sports).
-Analise com atenção o contrato de comissão / prestação de serviços fornecido em PDF e extraia os seguintes dados para o preenchimento automático da planilha de controle de Nota Fiscal e Comissão:
-
-${pdfText ? `TEXTO EXTRAÍDO DO PDF:\n"""\n${pdfText.substring(0, 8000)}\n"""\n` : ''}
+${pdfText ? `TEXTO EXTRAÍDO DO CONTRATO:\n"""\n${pdfText.substring(0, 15000)}\n"""\n` : ''}
 
 ATENÇÃO EXTREMA PARA O VALOR CHEIO TOTAL DA COMISSÃO E PARCELAS:
 - Identifique o VALOR CHEIO TOTAL DA COMISSÃO (valorComissao) em R$. Se o contrato mencionar, por exemplo, "3 parcelas de R$ 5.000,00", o valorComissao TOTAL É A SOMA TOTAL (R$ 15.000,00). Nunca retorne apenas o valor de 1 parcela no campo valorComissao.
@@ -105,70 +102,95 @@ Extraia os seguintes campos em JSON:
 14. eParcelado: boolean (true se houver mais de 1 parcela, false se for pagamento único/à vista).
 15. numeroParcelas: number (quantidade total de parcelas. Ex: 1 para à vista, 2, 3, 6, 12 etc.).
 16. parcelas: lista de objetos contendo { numeroParcela, valorParcela, dataVencimento (YYYY-MM-DD), descricao }.
-17. observacoes: OBS / Destaques e cláusulas importantes do contrato (ex: condições de parcelamento, observações sobre o atleta/clube, prazos ou dados de pagamento). Preserve a observação integral extraída.`;
+17. observacoes: OBS / Destaques e cláusulas importantes do contrato.`;
 
-        const response = await ai.models.generateContent({
-          model: "gemini-3.6-flash",
-          contents: [
-            {
-              inlineData: {
-                mimeType,
-                data: base64Pdf,
-              },
-            },
-            {
-              text: prompt,
-            },
-          ],
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          numeroContrato: { type: Type.STRING },
+          clienteNome: { type: Type.STRING },
+          clube: { type: Type.STRING },
+          atleta: { type: Type.STRING },
+          tipoContrato: { type: Type.STRING },
+          dataContrato: { type: Type.STRING },
+          numeroNF: { type: Type.STRING },
+          clienteCnpjCpf: { type: Type.STRING },
+          servicoDescricao: { type: Type.STRING },
+          valorBaseContrato: { type: Type.NUMBER },
+          percentualComissao: { type: Type.NUMBER },
+          valorComissao: { type: Type.NUMBER },
+          dataVencimentoNF: { type: Type.STRING },
+          eParcelado: { type: Type.BOOLEAN },
+          numeroParcelas: { type: Type.INTEGER },
+          parcelas: {
+            type: Type.ARRAY,
+            items: {
               type: Type.OBJECT,
               properties: {
-                numeroContrato: { type: Type.STRING },
-                clienteNome: { type: Type.STRING },
-                clube: { type: Type.STRING },
-                atleta: { type: Type.STRING },
-                tipoContrato: { type: Type.STRING },
-                dataContrato: { type: Type.STRING },
-                numeroNF: { type: Type.STRING },
-                clienteCnpjCpf: { type: Type.STRING },
-                servicoDescricao: { type: Type.STRING },
-                valorBaseContrato: { type: Type.NUMBER },
-                percentualComissao: { type: Type.NUMBER },
-                valorComissao: { type: Type.NUMBER },
-                dataVencimentoNF: { type: Type.STRING },
-                eParcelado: { type: Type.BOOLEAN },
-                numeroParcelas: { type: Type.INTEGER },
-                parcelas: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      numeroParcela: { type: Type.INTEGER },
-                      valorParcela: { type: Type.NUMBER },
-                      dataVencimento: { type: Type.STRING },
-                      descricao: { type: Type.STRING }
-                    }
-                  }
-                },
-                observacoes: { type: Type.STRING },
-              },
-              required: ["clienteNome"],
-            },
+                numeroParcela: { type: Type.INTEGER },
+                valorParcela: { type: Type.NUMBER },
+                dataVencimento: { type: Type.STRING },
+                descricao: { type: Type.STRING }
+              }
+            }
           },
-        });
+          observacoes: { type: Type.STRING },
+        },
+        required: ["clienteNome"],
+      };
 
-        const responseText = response.text;
-        if (responseText) {
-          extractedData = JSON.parse(responseText);
+      // Strategy 1: If text was extracted from PDF, try text prompt first (avoids PDF syntax/binary parsing errors in Gemini)
+      if (pdfText && pdfText.length > 20) {
+        try {
+          console.log(`Analisando texto do PDF (${pdfText.length} caracteres) com Gemini 3.6 Flash...`);
+          const response = await ai.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json",
+              responseSchema,
+            },
+          });
+          if (response.text) {
+            extractedData = JSON.parse(response.text);
+          }
+        } catch (textGeminiErr) {
+          console.warn("Aviso na análise via texto do PDF com Gemini:", textGeminiErr);
         }
-      } catch (geminiError: any) {
-        console.error("Erro ao chamar Gemini API para o PDF:", geminiError);
+      }
+
+      // Strategy 2: If text prompt was skipped or didn't yield result, try visual/multimodal inlineData PDF
+      if (!extractedData || !extractedData.clienteNome) {
+        try {
+          console.log(`Analisando arquivo visual ${file.originalname} (${file.size} bytes) via Gemini inlineData PDF...`);
+          const response = await ai.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: [
+              {
+                inlineData: {
+                  mimeType,
+                  data: base64Pdf,
+                },
+              },
+              {
+                text: prompt,
+              },
+            ],
+            config: {
+              responseMimeType: "application/json",
+              responseSchema,
+            },
+          });
+          if (response.text) {
+            extractedData = JSON.parse(response.text);
+          }
+        } catch (inlineGeminiErr) {
+          console.warn("Aviso na análise via inlineData PDF com Gemini:", inlineGeminiErr);
+        }
       }
     }
 
-    // 3. Fallback: Parse PDF text with regex if Gemini failed or is unavailable
+    // 3. Fallback: Parse PDF text with regex if Gemini was unavailable or yielded empty response
     if (!extractedData || !extractedData.clienteNome) {
       console.log("Executando extração alternativa via regex no texto do PDF...");
 
@@ -177,7 +199,7 @@ Extraia os seguintes campos em JSON:
       const cnpj = cnpjMatch ? cnpjMatch[0] : "";
 
       const contratoMatch = pdfText.match(/(?:contrato|instrumento|ct|nº|n°)\s*(?:de\s*)?(?:nº|n°)?\s*:?\s*([A-Z0-9\.\-\/]{3,20})/i);
-      const numeroContrato = contratoMatch ? contratoMatch[1].trim() : `CT-${file.originalname.replace('.pdf', '')}`;
+      const numeroContrato = contratoMatch ? contratoMatch[1].trim() : `CT-${file.originalname.replace(/\.pdf$/i, '')}`;
 
       // Search values R$
       const moneyMatches = pdfText.match(/R\$\s*[\d\.\,]+/gi) || [];
@@ -206,7 +228,8 @@ Extraia os seguintes campos em JSON:
         dataVencFormatted = `${yyyy}-${mm}-${dd}`;
       }
 
-      // Try extract client name from first 500 chars or filename
+      // Try extract client name from text lines or filename
+      const cleanFileName = file.originalname.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim();
       const lines = pdfText.split('\n').map(l => l.trim()).filter(l => l.length > 3);
       let clienteNome = "";
       for (const line of lines) {
@@ -217,7 +240,7 @@ Extraia os seguintes campos em JSON:
       }
 
       if (!clienteNome || clienteNome.length < 3) {
-        clienteNome = file.originalname.replace('.pdf', '').replace(/_/g, ' ');
+        clienteNome = cleanFileName || "Cliente / Contratante";
       }
 
       // Regex heuristics for parcelas
@@ -226,7 +249,7 @@ Extraia os seguintes campos em JSON:
 
       extractedData = {
         numeroContrato,
-        clienteNome: clienteNome.substring(0, 60),
+        clienteNome: clienteNome.substring(0, 80),
         clienteCnpjCpf: cnpj,
         servicoDescricao: "Prestação de Serviços / Comissionamento (Extraído do PDF)",
         valorBaseContrato: maxVal,
@@ -241,12 +264,16 @@ Extraia os seguintes campos em JSON:
       };
     }
 
-    // 4. Normalize defaults & generate parcelas array with exact cent division
+    // 4. Normalize defaults & generate parcelas array safely
+    if (!extractedData.clienteNome || extractedData.clienteNome.length < 2) {
+      extractedData.clienteNome = file.originalname.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim() || "Cliente / Contratante";
+    }
+
     if (!extractedData.valorComissao && extractedData.valorBaseContrato && extractedData.percentualComissao) {
       extractedData.valorComissao = Math.round(((extractedData.valorBaseContrato * extractedData.percentualComissao) / 100) * 100) / 100;
     }
 
-    if (!extractedData.dataVencimentoNF) {
+    if (!extractedData.dataVencimentoNF || !/^\d{4}-\d{2}-\d{2}$/.test(extractedData.dataVencimentoNF)) {
       const defaultDate = new Date();
       defaultDate.setDate(defaultDate.getDate() + 7);
       extractedData.dataVencimentoNF = defaultDate.toISOString().split("T")[0];
@@ -255,23 +282,29 @@ Extraia os seguintes campos em JSON:
     const totalParcelas = extractedData.numeroParcelas || (extractedData.parcelas?.length) || (extractedData.eParcelado ? 2 : 1);
     if (totalParcelas > 1 || extractedData.eParcelado) {
       extractedData.eParcelado = true;
-      extractedData.numeroParcelas = totalParcelas;
+      extractedData.numeroParcelas = Math.min(Math.max(totalParcelas, 1), 120);
 
       const totalComissao = Math.round((extractedData.valorComissao || 0) * 100) / 100;
       const valorBaseParcela = Math.floor((totalComissao / totalParcelas) * 100) / 100;
       const diffRounding = Math.round((totalComissao - (valorBaseParcela * totalParcelas)) * 100) / 100;
 
       const existingParcelas = extractedData.parcelas || [];
-      const [vYear, vMonth, vDay] = (extractedData.dataVencimentoNF || new Date().toISOString().slice(0,10)).split('-').map(Number);
+      
+      let [vYear, vMonth, vDay] = (extractedData.dataVencimentoNF || '').split('-').map(Number);
+      if (isNaN(vYear) || isNaN(vMonth) || isNaN(vDay)) {
+        const now = new Date();
+        vYear = now.getFullYear();
+        vMonth = now.getMonth() + 1;
+        vDay = 10;
+      }
 
       const parcelasGenerated = [];
-      for (let i = 1; i <= totalParcelas; i++) {
+      for (let i = 1; i <= extractedData.numeroParcelas; i++) {
         const existingP = existingParcelas[i - 1];
         
-        // Preserve existing extracted valorParcela if valid (> 0), else calculate from totalComissao
         let valP = existingP?.valorParcela && existingP.valorParcela > 0 
           ? existingP.valorParcela 
-          : (i === totalParcelas ? Math.round((valorBaseParcela + diffRounding) * 100) / 100 : valorBaseParcela);
+          : (i === extractedData.numeroParcelas ? Math.round((valorBaseParcela + diffRounding) * 100) / 100 : valorBaseParcela);
 
         let dateStr = existingP?.dataVencimento;
         if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
@@ -286,7 +319,7 @@ Extraia os seguintes campos em JSON:
           numeroParcela: i,
           valorParcela: valP,
           dataVencimento: dateStr,
-          descricao: existingP?.descricao || `Parcela ${i}/${totalParcelas}`
+          descricao: existingP?.descricao || `Parcela ${i}/${extractedData.numeroParcelas}`
         });
       }
       extractedData.parcelas = parcelasGenerated;
@@ -301,7 +334,7 @@ Extraia os seguintes campos em JSON:
   } catch (error: any) {
     console.error("Erro geral no endpoint /api/contracts/analyze:", error);
     return res.status(500).json({
-      error: "Não foi possível extrair os dados deste arquivo PDF. Certifique-se de que é um documento válido.",
+      error: "Ocorreu um erro ao processar este PDF.",
       details: error.message || String(error)
     });
   }
