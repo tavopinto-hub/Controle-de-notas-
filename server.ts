@@ -23,10 +23,11 @@ const PORT = 3000;
 app.use(express.json({ limit: '20mb' }));
 
 // Initialize Gemini Client safely
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
+function getGeminiClient(req?: express.Request): GoogleGenAI | null {
+  const customKey = (req?.headers?.["x-gemini-api-key"] as string) || req?.body?.customApiKey;
+  const apiKey = customKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.warn("⚠️ GEMINI_API_KEY is not defined in environment.");
+    console.warn("⚠️ GEMINI_API_KEY não definida no ambiente nem no cabeçalho x-gemini-api-key.");
     return null;
   }
   return new GoogleGenAI({ apiKey });
@@ -46,7 +47,17 @@ function getSheetsClient(accessToken?: string) {
 }
 
 // Endpoint: Analyze PDF Contract using Gemini AI & pdf-parse fallback
-app.post("/api/contracts/analyze", upload.single("pdfFile"), async (req, res) => {
+app.post("/api/contracts/analyze", (req, res, next) => {
+  upload.single("pdfFile")(req, res, (err) => {
+    if (err) {
+      console.error("Erro de upload no multer ao receber PDF:", err);
+      return res.status(400).json({
+        error: `Erro ao carregar o PDF: ${err.message || 'Tamanho limite de 15MB excedido.'}`
+      });
+    }
+    next();
+  });
+}, async (req: express.Request, res: express.Response) => {
   try {
     const file = req.file;
     if (!file) {
@@ -63,7 +74,7 @@ app.post("/api/contracts/analyze", upload.single("pdfFile"), async (req, res) =>
       }
       console.log(`PDF parse extracted ${pdfText.length} characters from ${file.originalname}`);
     } catch (pdfErr) {
-      console.warn("Aviso ao extrair texto direto do PDF com pdf-parse:", pdfErr);
+      console.warn("Aviso ao extrair texto do PDF com pdf-parse:", pdfErr);
     }
 
     const base64Pdf = file.buffer.toString("base64");
@@ -71,8 +82,8 @@ app.post("/api/contracts/analyze", upload.single("pdfFile"), async (req, res) =>
 
     let extractedData: any = null;
 
-    // 2. Gemini AI analysis with two-stage strategy
-    const ai = getGeminiClient();
+    // 2. Gemini AI analysis with custom key header support & two-stage strategy
+    const ai = getGeminiClient(req);
     if (ai) {
       const prompt = `Você é um assistente especialista em análise jurídica e financeira de contratos comerciais e de intermediação esportiva brasileiros (MMB Sports).
 Analise com atenção o contrato de comissão / prestação de serviços fornecido e extraia os seguintes dados para o preenchimento automático da planilha de controle de Nota Fiscal e Comissão:
@@ -139,7 +150,7 @@ Extraia os seguintes campos em JSON:
         required: ["clienteNome"],
       };
 
-      // Strategy 1: If text was extracted from PDF, try text prompt first (avoids PDF syntax/binary parsing errors in Gemini)
+      // Strategy 1: If text was extracted from PDF, try text prompt first
       if (pdfText && pdfText.length > 20) {
         try {
           console.log(`Analisando texto do PDF (${pdfText.length} caracteres) com Gemini 3.6 Flash...`);
@@ -159,7 +170,7 @@ Extraia os seguintes campos em JSON:
         }
       }
 
-      // Strategy 2: If text prompt was skipped or didn't yield result, try visual/multimodal inlineData PDF
+      // Strategy 2: If text prompt skipped or didn't yield result, try visual multimodal inlineData PDF
       if (!extractedData || !extractedData.clienteNome) {
         try {
           console.log(`Analisando arquivo visual ${file.originalname} (${file.size} bytes) via Gemini inlineData PDF...`);
