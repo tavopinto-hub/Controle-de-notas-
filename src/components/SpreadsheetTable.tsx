@@ -1,12 +1,36 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Download, FileSpreadsheet, Search, Plus, Trash2, Edit2, CheckCircle2,
-  AlertTriangle, Clock, Filter, ArrowUpDown, Send, FileText, ExternalLink, CopyX, UserCheck
+  AlertTriangle, Clock, Filter, ArrowUpDown, Send, FileText, ExternalLink, CopyX, UserCheck,
+  ChevronLeft, ChevronRight, Calendar, RotateCcw, X
 } from 'lucide-react';
 import { CommissionRecord, StatusNF, StatusPagamento } from '../types';
 import { formatCurrency, formatDate, exportToExcel, exportToCSV } from '../utils/excel';
 import { getRecordYear, isPastDate } from '../utils/dateUtils';
 import { cleanClubeAndAtleta } from '../utils/athleteUtils';
+import { deduplicateRecords } from '../App';
+
+const getCurrentIsoMonth = (): string => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  return `${yyyy}-${mm}`;
+};
+
+const MONTH_NAMES_PT = [
+  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
+];
+
+const formatIsoMonthLabel = (isoMonth: string): string => {
+  if (!isoMonth || isoMonth === 'ALL') return 'Todos os Meses';
+  const parts = isoMonth.split('-');
+  if (parts.length < 2) return isoMonth;
+  const yyyy = parts[0];
+  const monthIdx = parseInt(parts[1], 10) - 1;
+  if (isNaN(monthIdx) || monthIdx < 0 || monthIdx > 11) return isoMonth;
+  return `${MONTH_NAMES_PT[monthIdx]} ${yyyy}`;
+};
 
 interface SpreadsheetTableProps {
   records: CommissionRecord[];
@@ -39,6 +63,129 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
   const [internalTab, setInternalTab] = useState<'all' | 'nao_emitida' | 'fora_prazo' | 'emitida' | 'nao_autorizada' | 'pago'>('all');
   
   const activeTab = controlledActiveTab !== undefined ? controlledActiveTab : internalTab;
+
+  const currentIsoMonth = getCurrentIsoMonth();
+  const [selectedMonth, setSelectedMonth] = useState<string>(currentIsoMonth);
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [dateField, setDateField] = useState<'dataVencimentoNF' | 'dataContrato' | 'dataPagamento'>('dataVencimentoNF');
+
+  const monthScrollRef = useRef<HTMLDivElement>(null);
+  const activeMonthPillRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-scroll active month pill into view on mount or change
+  useEffect(() => {
+    if (activeMonthPillRef.current) {
+      activeMonthPillRef.current.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest'
+      });
+    }
+  }, [selectedMonth]);
+
+  // Helper to extract YYYY-MM from record date
+  const getRecordIsoMonth = (
+    rec: CommissionRecord,
+    field: 'dataVencimentoNF' | 'dataContrato' | 'dataPagamento' = 'dataVencimentoNF'
+  ): string => {
+    const val = rec[field] || rec.dataVencimentoNF || rec.dataContrato;
+    if (!val) return '';
+    if (val.includes('-')) {
+      const parts = val.split('-');
+      if (parts.length >= 2) return `${parts[0]}-${parts[1].padStart(2, '0')}`;
+    }
+    if (val.includes('/')) {
+      const parts = val.split('/');
+      if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}`;
+    }
+    return '';
+  };
+
+  // Generate continuous month list from -12 months to +18 months + any record months
+  const generatedMonthsList = useMemo(() => {
+    const setMonths = new Set<string>();
+    const now = new Date();
+    const currentY = now.getFullYear();
+    const currentM = now.getMonth();
+
+    for (let i = -12; i <= 18; i++) {
+      const d = new Date(currentY, currentM + i, 1);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      setMonths.add(`${yyyy}-${mm}`);
+    }
+
+    records.forEach((rec) => {
+      const mIso = getRecordIsoMonth(rec, dateField);
+      if (mIso && /^\d{4}-\d{2}$/.test(mIso)) {
+        setMonths.add(mIso);
+      }
+    });
+
+    return Array.from(setMonths).sort();
+  }, [records, dateField]);
+
+  const countRecordsForMonth = (isoMonth: string): number => {
+    return records.filter(r => getRecordIsoMonth(r, dateField) === isoMonth).length;
+  };
+
+  const scrollMonthBar = (direction: 'left' | 'right') => {
+    if (monthScrollRef.current) {
+      const amount = direction === 'left' ? -260 : 260;
+      monthScrollRef.current.scrollBy({ left: amount, behavior: 'smooth' });
+    }
+  };
+
+  const handleSelectMonth = (mIso: string) => {
+    setSelectedMonth(mIso);
+    setStartDate('');
+    setEndDate('');
+  };
+
+  const handleGoToCurrentMonth = () => {
+    setSelectedMonth(currentIsoMonth);
+    setStartDate('');
+    setEndDate('');
+  };
+
+  const handleClearDateRange = () => {
+    setStartDate('');
+    setEndDate('');
+  };
+
+  const handleApplyPreset = (preset: 'mes_atual' | 'proximo_mes' | 'mes_anterior' | 'este_ano' | 'todos') => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = now.getMonth();
+
+    if (preset === 'mes_atual') {
+      const curIso = `${yyyy}-${String(mm + 1).padStart(2, '0')}`;
+      setSelectedMonth(curIso);
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'proximo_mes') {
+      const nextD = new Date(yyyy, mm + 1, 1);
+      const nextIso = `${nextD.getFullYear()}-${String(nextD.getMonth() + 1).padStart(2, '0')}`;
+      setSelectedMonth(nextIso);
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'mes_anterior') {
+      const prevD = new Date(yyyy, mm - 1, 1);
+      const prevIso = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`;
+      setSelectedMonth(prevIso);
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'este_ano') {
+      setSelectedMonth('ALL');
+      setStartDate(`${yyyy}-01-01`);
+      setEndDate(`${yyyy}-12-31`);
+    } else if (preset === 'todos') {
+      setSelectedMonth('ALL');
+      setStartDate('');
+      setEndDate('');
+    }
+  };
 
   const handleSelectTab = (tab: 'all' | 'nao_emitida' | 'fora_prazo' | 'emitida' | 'nao_autorizada' | 'pago') => {
     if (onTabChange) {
@@ -102,14 +249,45 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
   const [sortField, setSortField] = useState<keyof CommissionRecord>('dataVencimentoNF');
   const [sortAsc, setSortAsc] = useState(true);
 
-  // First filter records by selectedYear
+  // 1. First filter records by selectedYear
   const yearFilteredRecords = records.filter(rec => {
     if (selectedYear === 'ALL') return true;
     return getRecordYear(rec) === selectedYear;
   });
 
-  // Filtered & sorted records
-  const filteredRecords = yearFilteredRecords.filter(rec => {
+  // Calculate live duplicate count metric
+  const duplicateCount = useMemo(() => {
+    return Math.max(0, records.length - deduplicateRecords(records).length);
+  }, [records]);
+
+  // 2. Filter by Month & Date Range
+  const dateFilteredRecords = yearFilteredRecords.filter(rec => {
+    const recordDate = rec[dateField] || rec.dataVencimentoNF;
+    if (!recordDate) return false;
+
+    let isoDate = recordDate;
+    if (recordDate.includes('/')) {
+      const parts = recordDate.split('/');
+      if (parts.length === 3) {
+        isoDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      }
+    }
+
+    // Custom date range filtering
+    if (startDate && isoDate < startDate) return false;
+    if (endDate && isoDate > endDate) return false;
+
+    // Selected Month filtering (if no explicit custom start/end date overrides)
+    if (selectedMonth !== 'ALL' && !startDate && !endDate) {
+      const recMonth = getRecordIsoMonth(rec, dateField);
+      if (recMonth !== selectedMonth) return false;
+    }
+
+    return true;
+  });
+
+  // 3. Filtered & sorted records by activeTab status and search term
+  const filteredRecords = dateFilteredRecords.filter(rec => {
     const searchLower = searchTerm.toLowerCase();
     const matchesSearch =
       rec.clienteNome.toLowerCase().includes(searchLower) ||
@@ -203,11 +381,20 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           {onDeduplicateRecords && (
             <button
               onClick={onDeduplicateRecords}
-              title="Remover registros duplicados da planilha"
-              className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 sm:px-3 bg-amber-200 hover:bg-amber-300 border-2 border-zinc-900 text-zinc-950 text-[11px] sm:text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px]"
+              title="Analisar e remover notas duplicadas da planilha"
+              className={`inline-flex items-center justify-center space-x-1 px-2.5 py-2 sm:px-3 border-2 border-zinc-900 text-zinc-950 text-[11px] sm:text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px] cursor-pointer ${
+                duplicateCount > 0
+                  ? 'bg-amber-400 hover:bg-amber-300 animate-pulse'
+                  : 'bg-amber-200 hover:bg-amber-300'
+              }`}
             >
               <CopyX className="w-3.5 h-3.5 text-zinc-950 flex-shrink-0" />
               <span>Limpar Duplicados</span>
+              <span className={`px-1.5 py-0.5 text-[9px] font-mono border border-zinc-900 font-bold ${
+                duplicateCount > 0 ? 'bg-rose-500 text-white' : 'bg-emerald-400 text-zinc-950'
+              }`}>
+                {duplicateCount > 0 ? `${duplicateCount} dup!` : '0 dup'}
+              </span>
             </button>
           )}
 
@@ -232,6 +419,226 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
         </div>
       </div>
 
+      {/* Horizontal Scrollable Month Bar */}
+      <div className="bg-zinc-900 border-b-4 border-zinc-900 p-3 text-white">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-2">
+          <div className="flex items-center space-x-2">
+            <Calendar className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+              Navegação por Mês (Notas & Vencimentos)
+            </span>
+            {selectedMonth === currentIsoMonth && !startDate && !endDate && (
+              <span className="bg-emerald-400 text-zinc-950 text-[10px] font-black uppercase px-2 py-0.5 border border-zinc-900">
+                Mês Atual
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-2 self-end sm:self-auto">
+            <button
+              onClick={handleGoToCurrentMonth}
+              className="px-2.5 py-1 bg-amber-400 text-zinc-950 hover:bg-amber-300 font-black text-[10px] uppercase border border-zinc-900 transition active:translate-x-0.5 cursor-pointer"
+            >
+              🎯 Ir para Mês Atual
+            </button>
+            <button
+              onClick={() => { setSelectedMonth('ALL'); setStartDate(''); setEndDate(''); }}
+              className={`px-2.5 py-1 font-black text-[10px] uppercase border border-zinc-900 transition cursor-pointer ${
+                selectedMonth === 'ALL' && !startDate && !endDate
+                  ? 'bg-white text-zinc-950 border-amber-400'
+                  : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+              }`}
+            >
+              ♾️ Ver Todos os Meses
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable Month Strip with Left/Right Arrow Controls */}
+        <div className="relative flex items-center">
+          <button
+            type="button"
+            onClick={() => scrollMonthBar('left')}
+            className="z-10 p-2 bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 mr-1 flex-shrink-0 cursor-pointer"
+            title="Mês Anterior"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          <div
+            ref={monthScrollRef}
+            className="flex items-center space-x-2 overflow-x-auto py-1.5 scroll-smooth no-scrollbar w-full"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            <button
+              onClick={() => { setSelectedMonth('ALL'); setStartDate(''); setEndDate(''); }}
+              className={`px-3 py-1.5 text-xs font-black uppercase tracking-wider border transition flex-shrink-0 flex items-center space-x-1.5 cursor-pointer ${
+                selectedMonth === 'ALL' && !startDate && !endDate
+                  ? 'bg-amber-400 text-zinc-950 border-white shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]'
+                  : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+              }`}
+            >
+              <span>Todos os Meses</span>
+              <span className="text-[10px] opacity-80 font-mono">({records.length})</span>
+            </button>
+
+            {generatedMonthsList.map((mIso) => {
+              const isCurrent = mIso === currentIsoMonth;
+              const isSelected = selectedMonth === mIso && !startDate && !endDate;
+              const countInMonth = countRecordsForMonth(mIso);
+
+              return (
+                <button
+                  key={mIso}
+                  ref={isSelected ? activeMonthPillRef : null}
+                  onClick={() => handleSelectMonth(mIso)}
+                  className={`px-3 py-1.5 text-xs font-black uppercase tracking-wider border transition flex-shrink-0 flex items-center space-x-1.5 cursor-pointer ${
+                    isSelected
+                      ? 'bg-amber-400 text-zinc-950 border-white font-black shadow-[2px_2px_0px_0px_rgba(255,255,255,1)]'
+                      : isCurrent
+                      ? 'bg-emerald-950 text-emerald-300 border-emerald-500 hover:bg-emerald-900'
+                      : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+                  }`}
+                >
+                  {isCurrent && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />}
+                  <span>{formatIsoMonthLabel(mIso)}</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 font-mono ${
+                    isSelected ? 'bg-zinc-950 text-amber-300' : 'bg-zinc-900 text-zinc-400'
+                  }`}>
+                    {countInMonth} NFs
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => scrollMonthBar('right')}
+            className="z-10 p-2 bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 ml-1 flex-shrink-0 cursor-pointer"
+            title="Próximo Mês"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Custom Date Range Filter Toolbar */}
+      <div className="bg-amber-50/80 border-b-2 border-zinc-900 px-4 py-2.5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center space-x-1 font-black text-zinc-900 uppercase">
+            <Filter className="w-3.5 h-3.5 text-amber-600" />
+            <span>Filtro de Data:</span>
+          </div>
+
+          <select
+            value={dateField}
+            onChange={(e) => setDateField(e.target.value as any)}
+            className="px-2 py-1 bg-white border-2 border-zinc-900 font-bold text-zinc-900 focus:outline-none text-xs cursor-pointer"
+          >
+            <option value="dataVencimentoNF">Vencimento da NF</option>
+            <option value="dataContrato">Data do Contrato</option>
+            <option value="dataPagamento">Data do Pagamento</option>
+          </select>
+
+          <div className="flex items-center space-x-1 bg-white border-2 border-zinc-900 px-2 py-0.5">
+            <span className="font-bold text-zinc-600 text-[10px] uppercase">De:</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                setStartDate(e.target.value);
+                if (e.target.value) setSelectedMonth('ALL');
+              }}
+              className="bg-transparent font-mono font-bold text-zinc-900 focus:outline-none text-xs"
+            />
+          </div>
+
+          <div className="flex items-center space-x-1 bg-white border-2 border-zinc-900 px-2 py-0.5">
+            <span className="font-bold text-zinc-600 text-[10px] uppercase">Até:</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => {
+                setEndDate(e.target.value);
+                if (e.target.value) setSelectedMonth('ALL');
+              }}
+              className="bg-transparent font-mono font-bold text-zinc-900 focus:outline-none text-xs"
+            />
+          </div>
+
+          {(startDate || endDate) && (
+            <button
+              onClick={handleClearDateRange}
+              className="px-2 py-1 bg-rose-200 hover:bg-rose-300 text-rose-950 border border-zinc-900 font-black uppercase text-[10px] flex items-center space-x-1 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+              <span>Limpar Intervalo</span>
+            </button>
+          )}
+        </div>
+
+        {/* Quick Date Presets */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] font-black uppercase text-zinc-500 mr-0.5">Atalhos:</span>
+          <button
+            onClick={() => handleApplyPreset('mes_atual')}
+            className="px-2.5 py-1 bg-white hover:bg-amber-200 border border-zinc-900 font-bold text-[11px] uppercase text-zinc-900 transition cursor-pointer"
+          >
+            Mês Atual
+          </button>
+          <button
+            onClick={() => handleApplyPreset('proximo_mes')}
+            className="px-2.5 py-1 bg-white hover:bg-amber-200 border border-zinc-900 font-bold text-[11px] uppercase text-zinc-900 transition cursor-pointer"
+          >
+            Próximo Mês
+          </button>
+          <button
+            onClick={() => handleApplyPreset('mes_anterior')}
+            className="px-2.5 py-1 bg-white hover:bg-amber-200 border border-zinc-900 font-bold text-[11px] uppercase text-zinc-900 transition cursor-pointer"
+          >
+            Mês Anterior
+          </button>
+          <button
+            onClick={() => handleApplyPreset('este_ano')}
+            className="px-2.5 py-1 bg-white hover:bg-amber-200 border border-zinc-900 font-bold text-[11px] uppercase text-zinc-900 transition cursor-pointer"
+          >
+            Este Ano
+          </button>
+        </div>
+      </div>
+
+      {/* Active Filter Context Banner */}
+      {(selectedMonth !== 'ALL' || startDate || endDate) && (
+        <div className="bg-amber-300 border-b-2 border-zinc-900 px-4 py-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs font-black text-zinc-950 uppercase tracking-tight">
+          <div className="flex items-center space-x-2">
+            <Calendar className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+            <span>
+              {startDate || endDate
+                ? `📅 Filtrando por Intervalo: ${startDate || 'Início'} até ${endDate || 'Fim'}`
+                : `📅 Exibindo Conteúdo do Mês: ${formatIsoMonthLabel(selectedMonth)}`}
+            </span>
+            {selectedMonth === currentIsoMonth && !startDate && !endDate && (
+              <span className="bg-emerald-400 text-zinc-950 px-2 py-0.5 border border-zinc-900 text-[10px]">
+                Mês Atual 📌
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-3 self-end sm:self-auto">
+            <span className="text-[11px]">
+              Total no período: <strong className="text-emerald-950 font-mono text-xs">{formatCurrency(dateFilteredRecords.reduce((acc, r) => acc + (r.valorComissao || 0), 0))}</strong> ({dateFilteredRecords.length} NFs)
+            </span>
+            <button
+              onClick={() => handleApplyPreset('todos')}
+              className="text-[10px] bg-zinc-900 text-white px-2 py-1 border border-zinc-900 hover:bg-zinc-800 transition cursor-pointer"
+            >
+              Ver Todos os Meses
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Filter Tabs & Search Bar */}
       <div className="px-5 py-3 border-b-2 border-zinc-900 bg-white flex flex-col sm:flex-row items-center justify-between gap-3">
         {/* Tabs */}
@@ -244,7 +651,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 : 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200'
             }`}
           >
-            Todas ({yearFilteredRecords.length})
+            Todas ({dateFilteredRecords.length})
           </button>
           <button
             onClick={() => handleSelectTab('nao_emitida')}
@@ -254,7 +661,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 : 'bg-amber-100 text-amber-950 hover:bg-amber-200'
             }`}
           >
-            A Emitir ({yearFilteredRecords.filter(r => r.statusNF !== 'Emitida').length})
+            A Emitir ({dateFilteredRecords.filter(r => r.statusNF !== 'Emitida').length})
           </button>
           <button
             onClick={() => handleSelectTab('fora_prazo')}
@@ -264,7 +671,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 : 'bg-red-100 text-red-950 hover:bg-red-200'
             }`}
           >
-            Fora do Prazo ⚠️ ({yearFilteredRecords.filter(r => r.statusNF !== 'Emitida' && isPastDate(r.dataVencimentoNF)).length})
+            Fora do Prazo ⚠️ ({dateFilteredRecords.filter(r => r.statusNF !== 'Emitida' && isPastDate(r.dataVencimentoNF)).length})
           </button>
           <button
             onClick={() => handleSelectTab('emitida')}
@@ -274,7 +681,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 : 'bg-sky-100 text-sky-950 hover:bg-sky-200'
             }`}
           >
-            Emitidas ({yearFilteredRecords.filter(r => r.statusNF === 'Emitida').length})
+            Emitidas ({dateFilteredRecords.filter(r => r.statusNF === 'Emitida').length})
           </button>
           <button
             onClick={() => handleSelectTab('pago')}
@@ -284,7 +691,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 : 'bg-emerald-100 text-emerald-950 hover:bg-emerald-200'
             }`}
           >
-            Pagas 🟢 ({yearFilteredRecords.filter(r => r.statusPagamento === 'Pago' || r.pagoOuNao === 'SIM (PAGO)' || r.pagoOuNao === 'SIM').length})
+            Pagas 🟢 ({dateFilteredRecords.filter(r => r.statusPagamento === 'Pago' || r.pagoOuNao === 'SIM (PAGO)' || r.pagoOuNao === 'SIM').length})
           </button>
           <button
             onClick={() => handleSelectTab('nao_autorizada')}
@@ -294,7 +701,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 : 'bg-rose-100 text-rose-950 hover:bg-rose-200'
             }`}
           >
-            Não Autorizadas ({yearFilteredRecords.filter(r => r.statusNF === 'Não autorizada').length})
+            Não Autorizadas ({dateFilteredRecords.filter(r => r.statusNF === 'Não autorizada').length})
           </button>
         </div>
 
@@ -348,9 +755,14 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                     <div className="font-mono font-black text-emerald-950 text-base">
                       {formatCurrency(record.valorComissao)}
                     </div>
-                    <span className="text-[10px] font-mono font-bold bg-purple-200 text-purple-950 px-1.5 py-0.5 border border-zinc-900">
-                      Parc. {record.parcelaAtual || 1}/{record.totalParcelas || 1}
-                    </span>
+                    <div className="flex items-center justify-end space-x-1 mt-0.5">
+                      <span className="text-[10px] font-mono font-bold bg-purple-200 text-purple-950 px-1.5 py-0.5 border border-zinc-900">
+                        Parc. {record.parcelaAtual || 1}/{record.totalParcelas || 1}
+                      </span>
+                      <span className="text-[10px] font-mono font-bold bg-amber-200 text-amber-950 px-1.5 py-0.5 border border-zinc-900">
+                        {formatIsoMonthLabel(getRecordIsoMonth(record, 'dataVencimentoNF'))}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
@@ -495,15 +907,20 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
 
                     {/* 1. DATA */}
                     <td className="py-3 px-3">
-                      <div className={`inline-flex items-center space-x-1 px-2 py-0.5 border border-zinc-900 font-mono font-bold ${
-                        isOverdueNF
-                          ? 'bg-rose-400 text-zinc-950'
-                          : isDueToday
-                          ? 'bg-amber-400 text-zinc-950'
-                          : 'bg-zinc-100 text-zinc-900'
-                      }`}>
-                        {isOverdueNF && <AlertTriangle className="w-3 h-3 text-zinc-950 mr-1" />}
-                        <span>{formatDate(record.dataVencimentoNF)}</span>
+                      <div className="flex flex-col space-y-1">
+                        <div className={`inline-flex items-center space-x-1 px-2 py-0.5 border border-zinc-900 font-mono font-bold ${
+                          isOverdueNF
+                            ? 'bg-rose-400 text-zinc-950'
+                            : isDueToday
+                            ? 'bg-amber-400 text-zinc-950'
+                            : 'bg-zinc-100 text-zinc-900'
+                        }`}>
+                          {isOverdueNF && <AlertTriangle className="w-3 h-3 text-zinc-950 mr-1" />}
+                          <span>{formatDate(record.dataVencimentoNF)}</span>
+                        </div>
+                        <span className="text-[10px] font-mono font-bold uppercase text-amber-900 bg-amber-100 px-1.5 py-0.5 border border-amber-300 w-fit">
+                          📅 {formatIsoMonthLabel(getRecordIsoMonth(record, 'dataVencimentoNF'))}
+                        </span>
                       </div>
                     </td>
 
@@ -556,9 +973,14 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
 
                     {/* 7. Parcelas */}
                     <td className="py-3 px-2 text-center font-mono">
-                      <span className="px-2 py-1 bg-purple-200 text-purple-950 border border-zinc-900 text-xs font-black">
-                        {record.parcelaAtual || 1}/{record.totalParcelas || 1}
-                      </span>
+                      <div className="flex flex-col items-center space-y-0.5">
+                        <span className="px-2 py-0.5 bg-purple-200 text-purple-950 border border-zinc-900 text-xs font-black">
+                          {record.parcelaAtual || 1}/{record.totalParcelas || 1}
+                        </span>
+                        <span className="text-[9px] font-mono font-bold text-purple-900 uppercase">
+                          {(record.totalParcelas || 1) > 1 ? `Parc. ${record.parcelaAtual || 1}` : 'Única'}
+                        </span>
+                      </div>
                     </td>
 
                     {/* 8. Pagamento */}

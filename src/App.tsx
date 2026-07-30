@@ -26,27 +26,108 @@ const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
 const STORAGE_KEY_EMAIL = 'app_email_settings_v1';
 const STORAGE_KEY_SHEETS = 'app_sheets_settings_v1';
 
-// Deduplication helper to prevent duplicate parcelas/records
+// Helpers for deduplication date & string normalization
+const normalizeDateISO = (d?: string): string => {
+  if (!d) return '';
+  const str = String(d).trim();
+  if (str.includes('/')) {
+    const parts = str.split('/');
+    if (parts.length === 3) {
+      let [day, month, year] = parts;
+      if (year.length === 2) year = '20' + year;
+      if (day.length === 1) day = '0' + day;
+      if (month.length === 1) month = '0' + month;
+      return `${year}-${month}-${day}`;
+    }
+  }
+  return str.substring(0, 10);
+};
+
+const getNormalizedAthleteKey = (rec: CommissionRecord): string => {
+  let athlete = (rec.atleta && rec.atleta !== '-' && rec.atleta !== 'Pendente') ? rec.atleta : '';
+  if (!athlete) {
+    let raw = rec.clienteNome || rec.clube || '';
+    const paren = raw.match(/[\(\[\{]([^\)\]\}]+)[\)\]\}]/);
+    if (paren && paren[1]) {
+      athlete = paren[1];
+    } else {
+      athlete = raw;
+    }
+  }
+  return athlete.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '').trim();
+};
+
+const getNormalizedClubKey = (rec: CommissionRecord): string => {
+  let clube = (rec.clube && rec.clube !== '-') ? rec.clube : '';
+  if (!clube) {
+    let raw = rec.clienteNome || '';
+    clube = raw.split('(')[0].split('-')[0].split('/')[0];
+  }
+  return clube.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '').trim();
+};
+
+// Comprehensive Deduplication helper to inspect the entire spreadsheet
 export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionRecord[] => {
+  const seenIds = new Set<string>();
   const seenKeys = new Set<string>();
   const result: CommissionRecord[] = [];
 
   for (const rec of recordsList) {
-    const normContrato = (rec.numeroContrato || '').split('(')[0].trim().toLowerCase();
-    const normCliente = (rec.clienteNome || '').trim().toLowerCase();
-    const normClube = (rec.clube || '').trim().toLowerCase();
-    const normAtleta = (rec.atleta || '').trim().toLowerCase();
-    const normParcela = `${rec.parcelaAtual || 1}/${rec.totalParcelas || 1}`;
+    if (!rec) continue;
 
-    // Unique signature for installment
-    const key = normContrato && normContrato.length > 3
-      ? `${normContrato}_p${normParcela}`
-      : `${normCliente}_${normClube}_${normAtleta}_p${normParcela}`;
-
-    if (!seenKeys.has(key)) {
-      seenKeys.add(key);
-      result.push(rec);
+    // 1. Skip exact duplicate IDs
+    if (rec.id && seenIds.has(rec.id)) {
+      continue;
     }
+
+    const athleteKey = getNormalizedAthleteKey(rec);
+    const clubKey = getNormalizedClubKey(rec);
+    const vencISO = normalizeDateISO(rec.dataVencimentoNF);
+    const monthISO = vencISO.substring(0, 7); // e.g. "2026-07"
+    const valor = Math.round((rec.valorComissao || 0) * 100) / 100;
+    const parcCurr = rec.parcelaAtual || 1;
+    const parcTot = rec.totalParcelas || 1;
+    const parcStr = `${parcCurr}/${parcTot}`;
+
+    let ct = (rec.numeroContrato || '').split('(')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (ct.includes('mbs') || ct.includes('sem')) ct = '';
+
+    // Key A: Athlete + Club + Installment String (e.g. "palmeiras_marlonfreitas_p6/32")
+    const keyAthleteParcStr = (athleteKey && athleteKey.length >= 3)
+      ? `ath_ps:${clubKey}_${athleteKey}_p${parcStr}`
+      : null;
+
+    // Key B: Athlete + Club + Month + Installment Number (e.g. "palmeiras_marlonfreitas_2026-07_p6")
+    const keyAthleteMonthParc = (athleteKey && athleteKey.length >= 3 && monthISO)
+      ? `ath_mp:${clubKey}_${athleteKey}_${monthISO}_p${parcCurr}`
+      : null;
+
+    // Key C: Athlete + Club + Due Date + Amount (e.g. "palmeiras_marlonfreitas_2026-07-25_62625")
+    const keyAthleteVencVal = (athleteKey && athleteKey.length >= 3 && vencISO)
+      ? `ath_vv:${clubKey}_${athleteKey}_${vencISO}_${valor}`
+      : null;
+
+    // Key D: Contract Number + Installment
+    const keyContractParc = (ct && ct.length >= 3)
+      ? `ct_p:${ct}_p${parcStr}`
+      : null;
+
+    if (
+      (keyAthleteParcStr && seenKeys.has(keyAthleteParcStr)) ||
+      (keyAthleteMonthParc && seenKeys.has(keyAthleteMonthParc)) ||
+      (keyAthleteVencVal && seenKeys.has(keyAthleteVencVal)) ||
+      (keyContractParc && seenKeys.has(keyContractParc))
+    ) {
+      continue; // Skip duplicate record
+    }
+
+    if (rec.id) seenIds.add(rec.id);
+    if (keyAthleteParcStr) seenKeys.add(keyAthleteParcStr);
+    if (keyAthleteMonthParc) seenKeys.add(keyAthleteMonthParc);
+    if (keyAthleteVencVal) seenKeys.add(keyAthleteVencVal);
+    if (keyContractParc) seenKeys.add(keyContractParc);
+
+    result.push(rec);
   }
 
   return result;
