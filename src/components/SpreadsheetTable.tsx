@@ -2,13 +2,14 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Download, FileSpreadsheet, Search, Plus, Trash2, Edit2, CheckCircle2,
   AlertTriangle, Clock, Filter, ArrowUpDown, Send, FileText, ExternalLink, CopyX, UserCheck,
-  ChevronLeft, ChevronRight, Calendar, RotateCcw, X
+  ChevronLeft, ChevronRight, Calendar, RotateCcw, X, FileDown
 } from 'lucide-react';
 import { CommissionRecord, StatusNF, StatusPagamento } from '../types';
 import { formatCurrency, formatDate, exportToExcel, exportToCSV } from '../utils/excel';
 import { getRecordYear, isPastDate } from '../utils/dateUtils';
 import { cleanClubeAndAtleta } from '../utils/athleteUtils';
 import { deduplicateRecords } from '../App';
+import { generateMonthlyPdf } from '../utils/pdfExport';
 
 const getCurrentIsoMonth = (): string => {
   const now = new Date();
@@ -334,6 +335,23 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
     }
   };
 
+  const handleExportPdf = () => {
+    const targetRecords = dateFilteredRecords.length > 0 ? dateFilteredRecords : yearFilteredRecords;
+    
+    let label = formatIsoMonthLabel(selectedMonth);
+    if (startDate || endDate) {
+      label = `Período (${formatDate(startDate)} a ${formatDate(endDate)})`;
+    } else if (selectedMonth === 'ALL') {
+      label = `Ano ${selectedYear} (Todos os Meses)`;
+    }
+
+    generateMonthlyPdf(targetRecords, {
+      monthLabel: label,
+      year: parseInt(selectedYear || '2026', 10),
+      filename: `Relatorio_Contabilidade_NFs_${label.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`
+    });
+  };
+
   return (
     <div className="bg-white border-4 border-zinc-900 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] overflow-hidden mb-8">
       {/* Table Header Controls */}
@@ -352,8 +370,17 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           </div>
         </div>
 
-        {/* Top actions: Export Excel / CSV / Email / Add Record - Responsive Grid */}
+        {/* Top actions: Export Excel / CSV / PDF Contadora / Email / Add Record - Responsive Grid */}
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
+          <button
+            onClick={handleExportPdf}
+            title="Exportar relatório PDF formatado para a contadora com as notas do período"
+            className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 sm:px-3 bg-rose-600 hover:bg-rose-500 text-white border-2 border-zinc-900 text-[11px] sm:text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px] cursor-pointer"
+          >
+            <FileDown className="w-3.5 h-3.5 text-white flex-shrink-0" />
+            <span>PDF Contadora</span>
+          </button>
+
           <button
             onClick={() => exportToExcel(records)}
             className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 sm:px-3 bg-white border-2 border-zinc-900 text-zinc-900 hover:bg-zinc-100 text-[11px] sm:text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px]"
@@ -435,6 +462,14 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           </div>
 
           <div className="flex items-center space-x-2 self-end sm:self-auto">
+            <button
+              onClick={handleExportPdf}
+              title="Baixar PDF formatado das notas do mês selecionado para envio à contadora"
+              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-black text-[10px] uppercase border border-zinc-900 transition active:translate-x-0.5 cursor-pointer flex items-center space-x-1"
+            >
+              <FileDown className="w-3 h-3 text-white" />
+              <span>📄 PDF do Mês</span>
+            </button>
             <button
               onClick={handleGoToCurrentMonth}
               className="px-2.5 py-1 bg-amber-400 text-zinc-950 hover:bg-amber-300 font-black text-[10px] uppercase border border-zinc-900 transition active:translate-x-0.5 cursor-pointer"
