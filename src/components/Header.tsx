@@ -10,6 +10,7 @@ interface HeaderProps {
   onOpenSheetsModal: () => void;
   onOpenNotifications: () => void;
   unreadCount: number;
+  isCloudSynced?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSheetsModal,
   onOpenNotifications,
   unreadCount,
+  isCloudSynced = true,
 }) => {
   return (
     <header className="bg-white border-b-4 border-zinc-900 text-zinc-900 sticky top-0 z-30 shadow-md">
@@ -35,11 +37,18 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
 
-          <div className="flex flex-col justify-center">
+          <div className="flex flex-col justify-center gap-1">
             <span className="inline-flex items-center px-3 py-1.5 font-black text-xs sm:text-sm uppercase tracking-wider bg-zinc-900 text-emerald-400 border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] w-max">
               <Sparkles className="w-3.5 h-3.5 mr-1.5 text-emerald-400" />
               Gestão de Comissões & NFs
             </span>
+            <div className="flex items-center space-x-1.5 px-2 py-0.5 bg-emerald-100 border border-emerald-500 text-emerald-950 text-[10px] sm:text-xs font-black uppercase w-max">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600"></span>
+              </span>
+              <span>Nuvem em Tempo Real (iPhone + iPad + PC)</span>
+            </div>
           </div>
         </div>
 

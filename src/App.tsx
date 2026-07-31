@@ -21,6 +21,13 @@ import { initAuth, getCachedAccessToken } from './lib/googleAuth';
 import { getRecordYear } from './utils/dateUtils';
 import { normalizeRecordsClubeAtleta, cleanClubeAndAtleta, propagateAthleteInfoToAllRecords, propagateAllAthletesAcrossAllRecords } from './utils/athleteUtils';
 import { fetchSheetRecordsDirectly } from './utils/sheetsClient';
+import { 
+  subscribeToRecords, 
+  saveRecordToFirestore, 
+  saveBatchRecordsToFirestore, 
+  deleteRecordFromFirestore,
+  seedFirestoreRecords
+} from './lib/firebase';
 
 const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
 const STORAGE_KEY_EMAIL = 'app_email_settings_v1';
@@ -250,6 +257,40 @@ export default function App() {
     }
   }, [records]);
 
+  // Real-time Firestore synchronization for iPhone, iPad, and Desktop
+  useEffect(() => {
+    const unsubscribe = subscribeToRecords(
+      (firestoreRecords) => {
+        if (firestoreRecords && firestoreRecords.length > 0) {
+          setRecords(normalizeRecordsClubeAtleta(deduplicateRecords(firestoreRecords)));
+        }
+      },
+      () => {
+        // If Firestore is empty on first run, seed with local or initial records
+        const initial = (() => {
+          try {
+            const saved = localStorage.getItem(STORAGE_KEY_RECORDS);
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                const cleanParsed = parsed.filter((r: any) => !r.id?.startsWith('rec-00') && r.clienteNome !== 'Nexus Tecnologia S.A.');
+                if (cleanParsed.length > 0) return cleanParsed;
+              }
+            }
+          } catch (e) {
+            console.error(e);
+          }
+          return initialRecords;
+        })();
+        const cleanInitial = normalizeRecordsClubeAtleta(deduplicateRecords(initial));
+        setRecords(cleanInitial);
+        seedFirestoreRecords(cleanInitial).catch(err => console.warn('Erro ao popular Firestore inicial:', err));
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
   // Sync emailSettings to localStorage
   useEffect(() => {
     try {
@@ -367,10 +408,12 @@ export default function App() {
       }
 
       if (loadedRecords.length > 0) {
+        let mergedList: CommissionRecord[] = [];
         setRecords(prev => {
-          const merged = deduplicateRecords([...prev, ...loadedRecords]);
-          return merged;
+          mergedList = deduplicateRecords([...prev, ...loadedRecords]);
+          return mergedList;
         });
+        saveBatchRecordsToFirestore(mergedList).catch(err => console.warn('Firestore import sync:', err));
         showToast(`${loadedRecords.length} comissões carregadas da planilha do Google Sheets!`, 'success');
       } else {
         showToast('Nenhum registro encontrado na planilha do Google Sheets.', 'info');
@@ -389,6 +432,7 @@ export default function App() {
     const cleaned = deduplicateRecords(records);
     const removedCount = beforeCount - cleaned.length;
     setRecords(cleaned);
+    saveBatchRecordsToFirestore(cleaned).catch(err => console.warn('Firestore deduplicate sync:', err));
     if (removedCount > 0) {
       showToast(`Removidas ${removedCount} parcela(s) duplicada(s) com sucesso!`, 'success');
       if (sheetSettings.spreadsheetId) {
@@ -406,6 +450,7 @@ export default function App() {
     const afterStr = JSON.stringify(cleaned);
 
     setRecords(cleaned);
+    saveBatchRecordsToFirestore(cleaned).catch(err => console.warn('Firestore separate sync:', err));
     if (beforeStr !== afterStr) {
       showToast('✨ Atletas colados no clube foram organizados para a coluna Atleta!', 'success');
       if (sheetSettings.spreadsheetId) {
@@ -495,6 +540,7 @@ export default function App() {
 
     const updatedRecords = deduplicateRecords([...newRecordsCreated, ...records]);
     setRecords(updatedRecords);
+    saveBatchRecordsToFirestore(updatedRecords).catch(err => console.warn('Firestore extract sync:', err));
 
     const firstRec = newRecordsCreated[0];
 
@@ -569,6 +615,7 @@ export default function App() {
       updatedList = updatedRecords;
     }
     setRecords(updatedList);
+    saveBatchRecordsToFirestore(updatedList).catch(err => console.warn('Firestore update sync:', err));
     showToast(`Comissão de ${updatedRecord.clienteNome || updatedRecord.clube || updatedRecord.atleta} atualizada.`);
     if (sheetSettings.spreadsheetId) {
       handleSyncToSheets(updatedList).catch(e => console.warn('Sync notice:', e));
@@ -588,6 +635,7 @@ export default function App() {
     const targetName = recordToDelete.clienteNome || recordToDelete.clube || 'Comissão';
     const updatedList = records.filter(r => r.id !== targetId);
     setRecords(updatedList);
+    deleteRecordFromFirestore(targetId).catch(err => console.warn('Firestore delete sync:', err));
     setRecordToDelete(null);
     setIsRecordModalOpen(false);
     showToast(`Comissão (${targetName}) excluída com sucesso!`, 'info');
@@ -614,6 +662,7 @@ export default function App() {
     }
 
     setRecords(updatedList);
+    saveBatchRecordsToFirestore(updatedList).catch(err => console.warn('Firestore modal save sync:', err));
     if (sheetSettings.spreadsheetId) {
       handleSyncToSheets(updatedList).catch(e => console.warn('Sync modal notice:', e));
     }

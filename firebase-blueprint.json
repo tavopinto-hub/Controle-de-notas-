@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "CommissionRecord": {
+      "title": "CommissionRecord",
+      "description": "Represents a commission and NF record for MB Sports",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "numeroContrato": { "type": "string" },
+        "clienteNome": { "type": "string" },
+        "clube": { "type": "string" },
+        "atleta": { "type": "string" },
+        "valorComissao": { "type": "number" },
+        "dataVencimentoNF": { "type": "string" },
+        "statusNF": { "type": "string" },
+        "statusPagamento": { "type": "string" },
+        "pagoOuNao": { "type": "string" }
+      },
+      "required": ["id", "clienteNome"]
+    }
+  },
+  "firestore": {
+    "/commission_records/{recordId}": {
+      "schema": "CommissionRecord",
+      "description": "Collection of commission records synchronized in real-time across iPhone, iPad, and all devices"
+    }
+  }
+}

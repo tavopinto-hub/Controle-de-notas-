@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Allow read/write to commission_records for real-time app synchronization across devices
+    match /commission_records/{recordId} {
+      allow read, write: if true;
+    }
+
+    // Allow read/write to app_settings for real-time config sync if needed
+    match /app_settings/{settingId} {
+      allow read, write: if true;
+    }
+  }
+}
