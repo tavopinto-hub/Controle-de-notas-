@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
+import { getAuth, signInAnonymously } from 'firebase/auth';
 import { 
   getFirestore, 
   doc, 
@@ -19,6 +19,11 @@ export const db = (firebaseConfig as any).firestoreDatabaseId
   ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
   : getFirestore(app);
 export const auth = getAuth(app);
+
+// Ensure active auth session for Firestore security rules & real-time websockets on mobile
+signInAnonymously(auth).catch(err => {
+  console.warn("Anonymous auth notice:", err);
+});
 
 // Validate Connection to Firestore on startup
 export async function testFirestoreConnection() {
@@ -81,6 +86,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 const COLLECTION_RECORDS = 'commission_records';
 
+let hasInitialized = false;
+
 /**
  * Subscribes to real-time changes in Firestore commission_records collection.
  * Any update made on iPhone, iPad, or Web is immediately broadcasted to all active devices.
@@ -94,10 +101,12 @@ export function subscribeToRecords(
   return onSnapshot(
     colRef,
     (snapshot) => {
-      if (snapshot.empty && onFirstEmpty) {
+      if (snapshot.empty && !hasInitialized && onFirstEmpty) {
+        hasInitialized = true;
         onFirstEmpty();
         return;
       }
+      hasInitialized = true;
       const records: CommissionRecord[] = [];
       snapshot.forEach((docSnap) => {
         records.push(docSnap.data() as CommissionRecord);

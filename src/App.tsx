@@ -261,7 +261,7 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeToRecords(
       (firestoreRecords) => {
-        if (firestoreRecords && firestoreRecords.length > 0) {
+        if (Array.isArray(firestoreRecords) && firestoreRecords.length > 0) {
           setRecords(normalizeRecordsClubeAtleta(deduplicateRecords(firestoreRecords)));
         }
       },
@@ -408,11 +408,8 @@ export default function App() {
       }
 
       if (loadedRecords.length > 0) {
-        let mergedList: CommissionRecord[] = [];
-        setRecords(prev => {
-          mergedList = deduplicateRecords([...prev, ...loadedRecords]);
-          return mergedList;
-        });
+        const mergedList = deduplicateRecords([...records, ...loadedRecords]);
+        setRecords(mergedList);
         saveBatchRecordsToFirestore(mergedList).catch(err => console.warn('Firestore import sync:', err));
         showToast(`${loadedRecords.length} comissões carregadas da planilha do Google Sheets!`, 'success');
       } else {
