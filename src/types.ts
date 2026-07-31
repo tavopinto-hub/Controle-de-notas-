@@ -31,6 +31,9 @@ export interface CommissionRecord {
   observacoes: string; // OBS
   criadoEm: string;
   pdfNomeArquivo?: string;
+  // Agentes envolvidos na comissão (múltiplos)
+  captadores?: string[];
+  agentes?: string[];
   // Parcelamento
   parcelaAtual?: number;
   totalParcelas?: number;
@@ -51,6 +54,8 @@ export interface ContractAnalysisResult {
   dataVencimentoNF: string; // DATA
   numeroNF?: string; // NF
   observacoes: string; // OBS
+  captadores?: string[];
+  agentes?: string[];
   // Parcelamento extraído do PDF
   eParcelado?: boolean;
   numeroParcelas?: number;

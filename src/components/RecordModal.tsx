@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, FileSpreadsheet, Calendar, DollarSign, CheckCircle2, Clock, FileText, AlertTriangle, Trash2, UserCheck } from 'lucide-react';
+import { X, Save, FileSpreadsheet, Calendar, DollarSign, CheckCircle2, Clock, FileText, AlertTriangle, Trash2, UserCheck, Users, Plus } from 'lucide-react';
 import { CommissionRecord, StatusNF, StatusPagamento } from '../types';
 import { cleanClubeAndAtleta } from '../utils/athleteUtils';
+import { PREDEFINED_AGENTES, getAgenteColor } from '../constants/captadores';
 
 interface RecordModalProps {
   isOpen: boolean;
   onClose: () => void;
   record: CommissionRecord | null; // null for new record
-  onSave: (record: CommissionRecord) => void;
+  allRecords?: CommissionRecord[];
+  onSave: (record: CommissionRecord, propagateToAllMonths?: boolean) => void;
   onDelete?: (id: string) => void;
 }
 
@@ -15,6 +17,7 @@ export const RecordModal: React.FC<RecordModalProps> = ({
   isOpen,
   onClose,
   record,
+  allRecords = [],
   onSave,
   onDelete
 }) => {
@@ -35,9 +38,16 @@ export const RecordModal: React.FC<RecordModalProps> = ({
     observacoes: ''
   });
 
+  const [customCaptador, setCustomCaptador] = useState('');
+  const [propagateToAllMonths, setPropagateToAllMonths] = useState<boolean>(true);
+
   useEffect(() => {
     if (record) {
-      setFormData(record);
+      setFormData({
+        ...record,
+        captadores: record.captadores || record.agentes || []
+      });
+      setPropagateToAllMonths(true);
     } else {
       setFormData({
         numeroContrato: `CT-2026/${Math.floor(100 + Math.random() * 900)}`,
@@ -59,11 +69,72 @@ export const RecordModal: React.FC<RecordModalProps> = ({
         pagoOuNao: 'Não pago',
         dataPagamento: '',
         observacoes: '',
+        captadores: [],
+        agentes: [],
         parcelaAtual: 1,
         totalParcelas: 1
       });
+      setPropagateToAllMonths(true);
     }
   }, [record, isOpen]);
+
+  // Check if current typed athlete matches existing records in allRecords
+  const matchingAthleteRecord = React.useMemo(() => {
+    const term = (formData.atleta || '').toLowerCase().trim();
+    if (!term || term.length < 2 || term === '-' || !allRecords.length) return null;
+    return allRecords.find(r => r.atleta && r.atleta.toLowerCase().trim() === term);
+  }, [formData.atleta, allRecords]);
+
+  const countMatchingAthleteRecords = React.useMemo(() => {
+    const term = (formData.atleta || '').toLowerCase().trim();
+    if (!term || term.length < 2 || term === '-' || !allRecords.length) return 0;
+    return allRecords.filter(r => r.atleta && r.atleta.toLowerCase().trim() === term).length;
+  }, [formData.atleta, allRecords]);
+
+  const handlePrefillAthleteData = () => {
+    if (!matchingAthleteRecord) return;
+    const existingAgentes = matchingAthleteRecord.agentes || matchingAthleteRecord.captadores || [];
+    setFormData(prev => ({
+      ...prev,
+      clube: matchingAthleteRecord.clube || prev.clube,
+      clienteNome: matchingAthleteRecord.clube || prev.clienteNome,
+      tipoContrato: matchingAthleteRecord.tipoContrato || prev.tipoContrato,
+      clienteCnpjCpf: matchingAthleteRecord.clienteCnpjCpf || prev.clienteCnpjCpf,
+      observacoes: matchingAthleteRecord.observacoes || prev.observacoes,
+      captadores: existingAgentes.length > 0 ? existingAgentes : prev.captadores,
+      agentes: existingAgentes.length > 0 ? existingAgentes : prev.agentes,
+      percentualComissao: matchingAthleteRecord.percentualComissao || prev.percentualComissao
+    }));
+  };
+
+  const toggleCaptador = (name: string) => {
+    const currentList = formData.captadores || formData.agentes || [];
+    const newList = currentList.includes(name)
+      ? currentList.filter(c => c !== name)
+      : [...currentList, name];
+
+    setFormData(prev => ({
+      ...prev,
+      captadores: newList,
+      agentes: newList
+    }));
+  };
+
+  const handleAddCustomCaptador = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = customCaptador.trim();
+    if (!trimmed) return;
+    const currentList = formData.captadores || formData.agentes || [];
+    if (!currentList.includes(trimmed)) {
+      const newList = [...currentList, trimmed];
+      setFormData(prev => ({
+        ...prev,
+        captadores: newList,
+        agentes: newList
+      }));
+    }
+    setCustomCaptador('');
+  };
 
   if (!isOpen) return null;
 
@@ -118,12 +189,14 @@ export const RecordModal: React.FC<RecordModalProps> = ({
       pagoOuNao: formData.statusPagamento === 'Pago' ? 'Pago' : 'Não pago',
       dataPagamento: formData.dataPagamento || '',
       observacoes: formData.observacoes || '',
+      captadores: formData.captadores || formData.agentes || [],
+      agentes: formData.captadores || formData.agentes || [],
       criadoEm: record ? record.criadoEm : new Date().toISOString(),
       parcelaAtual: Number(formData.parcelaAtual) || 1,
       totalParcelas: Number(formData.totalParcelas) || 1
     };
 
-    onSave(finalRecord);
+    onSave(finalRecord, propagateToAllMonths);
     onClose();
   };
 
@@ -183,6 +256,18 @@ export const RecordModal: React.FC<RecordModalProps> = ({
                 placeholder="Ex: Gabriel Barbosa"
                 className="w-full px-3 py-2 border-2 border-zinc-900 font-bold text-xs uppercase focus:bg-amber-50 focus:outline-none"
               />
+              {countMatchingAthleteRecords > 0 && matchingAthleteRecord && (
+                <div className="mt-1 flex items-center justify-between bg-amber-100 border border-amber-400 p-1.5 text-[10px] font-bold text-amber-950">
+                  <span>💡 {countMatchingAthleteRecords} parcela(s) encontradas.</span>
+                  <button
+                    type="button"
+                    onClick={handlePrefillAthleteData}
+                    className="px-1.5 py-0.5 bg-amber-400 text-zinc-950 border border-zinc-900 font-black uppercase hover:bg-amber-300 cursor-pointer"
+                  >
+                    Preencher Dados
+                  </button>
+                </div>
+              )}
             </div>
 
             <div>
@@ -249,6 +334,87 @@ export const RecordModal: React.FC<RecordModalProps> = ({
                 />
               </div>
             </div>
+          </div>
+
+          {/* Agentes Envolvidos na Comissão */}
+          <div className="bg-indigo-50/70 p-3.5 border-2 border-zinc-900">
+            <div className="flex items-center justify-between mb-2">
+              <label className="font-black text-zinc-900 uppercase tracking-wider text-xs flex items-center space-x-1.5">
+                <Users className="w-4 h-4 text-indigo-700" />
+                <span>Agentes Envolvidos na Comissão</span>
+              </label>
+              <span className="text-[10px] font-bold text-indigo-900 bg-indigo-200 px-2 py-0.5 rounded border border-indigo-400">
+                {(formData.captadores || formData.agentes || []).length} selecionado(s)
+              </span>
+            </div>
+
+            {/* Predefined agentes interactive chips */}
+            <div className="flex flex-wrap gap-1.5 mb-2.5">
+              {PREDEFINED_AGENTES.map((cap) => {
+                const isSelected = (formData.captadores || formData.agentes || []).includes(cap);
+                const colors = getAgenteColor(cap);
+                return (
+                  <button
+                    key={cap}
+                    type="button"
+                    onClick={() => toggleCaptador(cap)}
+                    className={`px-2.5 py-1 text-xs font-bold transition flex items-center space-x-1 border cursor-pointer select-none ${
+                      isSelected
+                        ? `bg-zinc-900 text-white border-zinc-900 shadow-[2px_2px_0px_0px_rgba(79,70,229,1)]`
+                        : `bg-white ${colors.text} ${colors.border} hover:bg-zinc-100`
+                    }`}
+                  >
+                    <span>{isSelected ? '✓ ' : '+ '}</span>
+                    <span>{cap}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom Agente Input */}
+            <div className="flex items-center space-x-2 pt-2 border-t border-indigo-200">
+              <input
+                type="text"
+                value={customCaptador}
+                onChange={(e) => setCustomCaptador(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddCustomCaptador(e);
+                  }
+                }}
+                placeholder="Outro agente... (pressione Enter)"
+                className="flex-1 px-2.5 py-1.5 bg-white border border-zinc-900 text-xs font-bold focus:bg-amber-50 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomCaptador}
+                className="px-3 py-1.5 bg-zinc-900 text-white text-xs font-black uppercase tracking-wider border border-zinc-900 hover:bg-zinc-800 transition cursor-pointer"
+              >
+                + Adicionar
+              </button>
+            </div>
+
+            {/* Selected custom agentes (if not in predefined list) */}
+            {(formData.captadores || formData.agentes || []).some(c => !(PREDEFINED_AGENTES as readonly string[]).includes(c)) && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase self-center mr-1">Outros:</span>
+                {(formData.captadores || formData.agentes || [])
+                  .filter(c => !(PREDEFINED_AGENTES as readonly string[]).includes(c))
+                  .map(c => (
+                    <span key={c} className="inline-flex items-center space-x-1 px-2 py-0.5 bg-zinc-900 text-white text-[11px] font-bold">
+                      <span>{c}</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleCaptador(c)}
+                        className="hover:text-rose-400 font-black ml-1"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+              </div>
+            )}
           </div>
 
           {/* Values & Installment Section */}
@@ -420,6 +586,28 @@ export const RecordModal: React.FC<RecordModalProps> = ({
               placeholder="Condições técnicas, retentores, PIX..."
               className="w-full px-3 py-2 border-2 border-zinc-900 text-xs font-bold focus:bg-amber-50 focus:outline-none"
             />
+          </div>
+
+          {/* PROPAGATION TO ALL MONTHS / PARCELAS FOR ATHLETE */}
+          <div className="bg-amber-50 border-2 border-zinc-900 p-3 space-y-1">
+            <label className="flex items-center space-x-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={propagateToAllMonths}
+                onChange={(e) => setPropagateToAllMonths(e.target.checked)}
+                className="w-4 h-4 text-emerald-600 border-2 border-zinc-900 rounded-none focus:ring-0 cursor-pointer"
+              />
+              <span className="text-xs font-black uppercase text-zinc-950 tracking-tight">
+                ⚡ Atribuir estas informações (Agentes, Clube, Tipo) a TODOS OS MESES deste Atleta
+              </span>
+            </label>
+            <p className="text-[11px] text-zinc-700 font-bold pl-6">
+              {formData.atleta && formData.atleta !== '-' ? (
+                <>Ao salvar, as informações de Agentes, Clube e Contrato do atleta <strong className="text-zinc-950 uppercase font-black">{formData.atleta}</strong> serão sincronizadas em todas as parcelas e meses cadastrados.</>
+              ) : (
+                <>Sincroniza as informações alteradas em todas as parcelas e meses deste atleta em toda a planilha.</>
+              )}
+            </p>
           </div>
 
           {/* Footer Actions */}

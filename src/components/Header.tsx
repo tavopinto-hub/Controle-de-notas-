@@ -21,12 +21,12 @@ export const Header: React.FC<HeaderProps> = ({
   unreadCount,
 }) => {
   return (
-    <header className="bg-white border-b-4 border-zinc-900 text-zinc-900 sticky top-0 z-30 shadow-sm">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        {/* Brand & Logo */}
-        <div className="flex items-center space-x-3 sm:space-x-4">
-          {/* Prominent Logo */}
-          <div className="h-16 sm:h-20 w-48 sm:w-64 md:w-72 bg-white border-3 border-zinc-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center p-1.5 overflow-hidden flex-shrink-0 group transition-all">
+    <header className="bg-white border-b-4 border-zinc-900 text-zinc-900 sticky top-0 z-30 shadow-md">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-3 sm:py-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4">
+        {/* Brand & Prominent Logo */}
+        <div className="flex items-center space-x-3 sm:space-x-5">
+          {/* Bigger, High-Impact Logo Frame */}
+          <div className="h-20 sm:h-28 md:h-32 w-56 sm:w-72 md:w-96 bg-white border-3 sm:border-4 border-zinc-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex items-center justify-center p-2 sm:p-2.5 overflow-hidden flex-shrink-0 group transition-all">
             <img
               src={mbSportsLogo}
               alt="MB Sports Logo"
@@ -36,9 +36,9 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           <div className="flex flex-col justify-center">
-            <span className="inline-flex items-center px-2.5 py-1 font-black text-[10px] sm:text-xs uppercase tracking-wider bg-zinc-900 text-emerald-400 border border-zinc-900 w-max">
-              <Sparkles className="w-3 h-3 mr-1" />
-              Gestão de Comissões
+            <span className="inline-flex items-center px-3 py-1.5 font-black text-xs sm:text-sm uppercase tracking-wider bg-zinc-900 text-emerald-400 border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] w-max">
+              <Sparkles className="w-3.5 h-3.5 mr-1.5 text-emerald-400" />
+              Gestão de Comissões & NFs
             </span>
           </div>
         </div>

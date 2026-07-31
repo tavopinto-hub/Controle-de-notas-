@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Download, FileSpreadsheet, Search, Plus, Trash2, Edit2, CheckCircle2,
   AlertTriangle, Clock, Filter, ArrowUpDown, Send, FileText, ExternalLink, CopyX, UserCheck,
-  ChevronLeft, ChevronRight, Calendar, RotateCcw, X, FileDown
+  ChevronLeft, ChevronRight, Calendar, RotateCcw, X, FileDown, Users
 } from 'lucide-react';
 import { CommissionRecord, StatusNF, StatusPagamento } from '../types';
 import { formatCurrency, formatDate, exportToExcel, exportToCSV } from '../utils/excel';
@@ -10,6 +10,8 @@ import { getRecordYear, isPastDate } from '../utils/dateUtils';
 import { cleanClubeAndAtleta } from '../utils/athleteUtils';
 import { deduplicateRecords } from '../App';
 import { generateMonthlyPdf } from '../utils/pdfExport';
+import { PREDEFINED_AGENTES, getAgenteColor } from '../constants/captadores';
+import { PdfExportModal } from './PdfExportModal';
 
 const getCurrentIsoMonth = (): string => {
   const now = new Date();
@@ -70,6 +72,8 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [dateField, setDateField] = useState<'dataVencimentoNF' | 'dataContrato' | 'dataPagamento'>('dataVencimentoNF');
+  const [selectedCaptadorFilter, setSelectedCaptadorFilter] = useState<string>('ALL');
+  const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
 
   const monthScrollRef = useRef<HTMLDivElement>(null);
   const activeMonthPillRef = useRef<HTMLButtonElement>(null);
@@ -287,18 +291,26 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
     return true;
   });
 
-  // 3. Filtered & sorted records by activeTab status and search term
+  // 3. Filtered & sorted records by activeTab status, search term and agente filter
   const filteredRecords = dateFilteredRecords.filter(rec => {
     const searchLower = searchTerm.toLowerCase();
+    const agentesList = rec.agentes || rec.captadores || [];
     const matchesSearch =
       rec.clienteNome.toLowerCase().includes(searchLower) ||
       rec.numeroContrato.toLowerCase().includes(searchLower) ||
       rec.clienteCnpjCpf.toLowerCase().includes(searchLower) ||
       (rec.clube && rec.clube.toLowerCase().includes(searchLower)) ||
       (rec.atleta && rec.atleta.toLowerCase().includes(searchLower)) ||
-      (rec.numeroNF && rec.numeroNF.toLowerCase().includes(searchLower));
+      (rec.numeroNF && rec.numeroNF.toLowerCase().includes(searchLower)) ||
+      (agentesList.some(c => c.toLowerCase().includes(searchLower)));
 
     if (!matchesSearch) return false;
+
+    if (selectedCaptadorFilter !== 'ALL') {
+      if (!agentesList.includes(selectedCaptadorFilter)) {
+        return false;
+      }
+    }
 
     if (activeTab === 'nao_emitida') {
       return rec.statusNF === 'Não emitida' || rec.statusNF === 'Pendente' || rec.statusNF !== 'Emitida';
@@ -336,8 +348,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
   };
 
   const handleExportPdf = () => {
-    const targetRecords = dateFilteredRecords.length > 0 ? dateFilteredRecords : yearFilteredRecords;
-    
+    // Export exact currently filtered records (respecting month, status tab, agente, search term)
     let label = formatIsoMonthLabel(selectedMonth);
     if (startDate || endDate) {
       label = `Período (${formatDate(startDate)} a ${formatDate(endDate)})`;
@@ -345,10 +356,24 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
       label = `Ano ${selectedYear} (Todos os Meses)`;
     }
 
-    generateMonthlyPdf(targetRecords, {
+    let statusLabel = 'Todas';
+    if (activeTab === 'nao_emitida') statusLabel = 'A Emitir';
+    else if (activeTab === 'fora_prazo') statusLabel = 'Fora do Prazo';
+    else if (activeTab === 'emitida') statusLabel = 'Emitidas';
+    else if (activeTab === 'pago') statusLabel = 'Pagas';
+    else if (activeTab === 'nao_autorizada') statusLabel = 'Não Autorizadas';
+
+    const filenameAgente = selectedCaptadorFilter !== 'ALL' ? `_Agente_${selectedCaptadorFilter.replace(/\s+/g, '_')}` : '';
+    const cleanLabel = label.replace(/[^a-zA-Z0-9]/g, '_');
+    const filename = `Relatorio_Contabilidade_NFs${filenameAgente}_${cleanLabel}.pdf`;
+
+    generateMonthlyPdf(filteredRecords, {
       monthLabel: label,
       year: parseInt(selectedYear || '2026', 10),
-      filename: `Relatorio_Contabilidade_NFs_${label.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`
+      agenteFilter: selectedCaptadorFilter,
+      statusFilter: statusLabel,
+      searchTerm: searchTerm,
+      filename: filename
     });
   };
 
@@ -370,15 +395,24 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           </div>
         </div>
 
-        {/* Top actions: Export Excel / CSV / PDF Contadora / Email / Add Record - Responsive Grid */}
+        {/* Top actions: Export Excel / CSV / PDF Contadora / PDF por Agente / Email / Add Record - Responsive Grid */}
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2">
           <button
             onClick={handleExportPdf}
-            title="Exportar relatório PDF formatado para a contadora com as notas do período"
+            title="Exportar relatório PDF da visualização atual (respeita filtros ativos)"
             className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 sm:px-3 bg-rose-600 hover:bg-rose-500 text-white border-2 border-zinc-900 text-[11px] sm:text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px] cursor-pointer"
           >
             <FileDown className="w-3.5 h-3.5 text-white flex-shrink-0" />
-            <span>PDF Contadora</span>
+            <span>PDF Filtros Atuais ({filteredRecords.length})</span>
+          </button>
+
+          <button
+            onClick={() => setIsPdfModalOpen(true)}
+            title="Gerar PDF personalizado filtrado por Agente, Mês e Status das Notas"
+            className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 sm:px-3 bg-amber-400 hover:bg-amber-300 text-zinc-950 border-2 border-zinc-900 text-[11px] sm:text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px] cursor-pointer"
+          >
+            <Users className="w-3.5 h-3.5 text-zinc-950 flex-shrink-0" />
+            <span>PDF por Agente / Filtros ⚙️</span>
           </button>
 
           <button
@@ -602,13 +636,33 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
             />
           </div>
 
-          {(startDate || endDate) && (
+          {/* Agente Filter Dropdown */}
+          <div className="flex items-center space-x-1 bg-indigo-50 border-2 border-zinc-900 px-2 py-0.5">
+            <Users className="w-3.5 h-3.5 text-indigo-700" />
+            <select
+              value={selectedCaptadorFilter}
+              onChange={(e) => setSelectedCaptadorFilter(e.target.value)}
+              className="bg-transparent font-black text-indigo-950 text-xs focus:outline-none cursor-pointer"
+            >
+              <option value="ALL">Todos os Agentes</option>
+              {PREDEFINED_AGENTES.map((cap) => (
+                <option key={cap} value={cap}>
+                  Agente: {cap}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {(startDate || endDate || selectedCaptadorFilter !== 'ALL') && (
             <button
-              onClick={handleClearDateRange}
+              onClick={() => {
+                handleClearDateRange();
+                setSelectedCaptadorFilter('ALL');
+              }}
               className="px-2 py-1 bg-rose-200 hover:bg-rose-300 text-rose-950 border border-zinc-900 font-black uppercase text-[10px] flex items-center space-x-1 cursor-pointer"
             >
               <X className="w-3 h-3" />
-              <span>Limpar Intervalo</span>
+              <span>Limpar Filtros</span>
             </button>
           )}
         </div>
@@ -801,7 +855,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                   </div>
                 </div>
 
-                {/* Main Info: Clube + Atleta */}
+                {/* Main Info: Clube + Atleta + Captadores */}
                 <div>
                   <div className="font-black text-sm uppercase text-zinc-900">
                     {cleaned.clube}
@@ -810,6 +864,23 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                     <span>Atleta: <strong className="text-zinc-900 uppercase">{cleaned.atleta}</strong></span>
                     <span className="text-[10px] bg-zinc-100 px-1.5 py-0.5 border border-zinc-900 uppercase">{record.tipoContrato || record.servicoDescricao || 'Intermediação'}</span>
                   </div>
+                  {/* Agentes Badges */}
+                  {((record.agentes && record.agentes.length > 0) || (record.captadores && record.captadores.length > 0)) && (
+                    <div className="flex flex-wrap gap-1 mt-1.5 pt-1.5 border-t border-zinc-100">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase self-center mr-0.5">Agente(s):</span>
+                      {(record.agentes || record.captadores || []).map(cap => {
+                        const colors = getAgenteColor(cap);
+                        return (
+                          <span
+                            key={cap}
+                            className={`px-1.5 py-0.5 text-[10px] font-black uppercase border ${colors.bg} ${colors.text} ${colors.border}`}
+                          >
+                            {cap}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Status Toggles for Mobile Touch */}
@@ -904,6 +975,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                 </div>
               </th>
               <th className="py-3 px-3 min-w-[140px]">Atleta</th>
+              <th className="py-3 px-3 min-w-[160px]">Agentes</th>
               <th className="py-3 px-3 min-w-[140px]">Tipo de Contrato</th>
               <th className="py-3 px-3 min-w-[110px]">NF</th>
               <th className="py-3 px-2 text-center">Parcelas</th>
@@ -917,7 +989,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           <tbody className="divide-y-2 divide-zinc-900 text-zinc-900 font-medium">
             {filteredRecords.length === 0 ? (
               <tr>
-                <td colSpan={13} className="py-12 text-center text-zinc-500 font-bold uppercase tracking-wider bg-white">
+                <td colSpan={14} className="py-12 text-center text-zinc-500 font-bold uppercase tracking-wider bg-white">
                   Nenhum registro de comissão encontrado com os filtros selecionados.
                 </td>
               </tr>
@@ -977,6 +1049,27 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                     {/* 4. Atleta */}
                     <td className="py-3 px-3 font-bold text-zinc-900 uppercase">
                       {cleaned.atleta}
+                    </td>
+
+                    {/* 4.5. Agentes */}
+                    <td className="py-3 px-3">
+                      {((record.agentes && record.agentes.length > 0) || (record.captadores && record.captadores.length > 0)) ? (
+                        <div className="flex flex-wrap gap-1">
+                          {(record.agentes || record.captadores || []).map(cap => {
+                            const colors = getAgenteColor(cap);
+                            return (
+                              <span
+                                key={cap}
+                                className={`px-2 py-0.5 text-[10px] font-black uppercase border ${colors.bg} ${colors.text} ${colors.border}`}
+                              >
+                                {cap}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <span className="text-zinc-400 text-[10px] font-mono italic">-</span>
+                      )}
                     </td>
 
                     {/* 5. Tipo de contrato */}
@@ -1088,6 +1181,17 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           Dica: Clique no pill de status da NF ou do Pagamento para alternar rapidamente.
         </div>
       </div>
+
+      {/* PDF Export Modal */}
+      <PdfExportModal
+        isOpen={isPdfModalOpen}
+        onClose={() => setIsPdfModalOpen(false)}
+        records={records}
+        currentMonth={selectedMonth}
+        currentAgenteFilter={selectedCaptadorFilter}
+        currentStatusTab={activeTab}
+        currentSearchTerm={searchTerm}
+      />
     </div>
   );
 };

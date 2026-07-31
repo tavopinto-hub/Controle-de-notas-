@@ -4,9 +4,12 @@ import { CommissionRecord } from '../types';
 import { formatCurrency, formatDate } from './excel';
 import { cleanClubeAndAtleta } from './athleteUtils';
 
-interface ExportPdfOptions {
+export interface ExportPdfOptions {
   monthLabel: string; // e.g. "Julho / 2026" or "Ano 2026 - Todos os Meses"
-  year: number;
+  year?: number;
+  agenteFilter?: string; // e.g. "Andre Brito" or "ALL"
+  statusFilter?: string; // e.g. "A Emitir", "Pagas", "Emitidas", "Todas"
+  searchTerm?: string;
   filename?: string;
 }
 
@@ -22,17 +25,29 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
   
   // Header section
   doc.setFillColor(24, 24, 27); // Dark zinc header banner
-  doc.rect(0, 0, pageWidth, 24, 'F');
+  doc.rect(0, 0, pageWidth, 26, 'F');
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text('MMB SPORTS — RELATÓRIO DE NOTAS FISCAIS & COMISSÕES', 14, 12);
+  doc.setFontSize(15);
+  doc.text('MMB SPORTS — RELATÓRIO DE NOTAS FISCAIS & COMISSÕES', 14, 11);
+
+  // Subtitle with active filters context
+  let filterContextStr = `Período: ${options.monthLabel}`;
+  if (options.agenteFilter && options.agenteFilter !== 'ALL') {
+    filterContextStr += ` | AGENTE: ${options.agenteFilter.toUpperCase()}`;
+  }
+  if (options.statusFilter && options.statusFilter !== 'all' && options.statusFilter !== 'Todas') {
+    filterContextStr += ` | STATUS: ${options.statusFilter.toUpperCase()}`;
+  }
+  if (options.searchTerm && options.searchTerm.trim() !== '') {
+    filterContextStr += ` | BUSCA: "${options.searchTerm.trim()}"`;
+  }
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setTextColor(212, 212, 216);
-  doc.text(`Documento para Contabilidade | Período: ${options.monthLabel}`, 14, 18);
+  doc.text(filterContextStr, 14, 18);
 
   const todayStr = new Date().toLocaleDateString('pt-BR', {
     day: '2-digit',
@@ -41,51 +56,53 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
     hour: '2-digit',
     minute: '2-digit'
   });
+  doc.setFontSize(8.5);
   doc.text(`Gerado em: ${todayStr}`, pageWidth - 14, 18, { align: 'right' });
 
   // Calculate Summary metrics
   const totalRecords = records.length;
   const totalValor = records.reduce((acc, r) => acc + (r.valorComissao || 0), 0);
   
-  const paidRecords = records.filter(r => r.pagoOuNao === 'SIM (PAGO)' || r.statusPagamento === 'Pago');
+  const paidRecords = records.filter(r => r.pagoOuNao === 'SIM (PAGO)' || r.pagoOuNao === 'SIM' || r.statusPagamento === 'Pago');
   const totalPaid = paidRecords.reduce((acc, r) => acc + (r.valorComissao || 0), 0);
   
-  const pendingRecords = records.filter(r => r.pagoOuNao !== 'SIM (PAGO)' && r.statusPagamento !== 'Pago');
+  const pendingRecords = records.filter(r => r.pagoOuNao !== 'SIM (PAGO)' && r.pagoOuNao !== 'SIM' && r.statusPagamento !== 'Pago');
   const totalPending = pendingRecords.reduce((acc, r) => acc + (r.valorComissao || 0), 0);
 
   // Draw Summary KPI Box
   doc.setFillColor(244, 244, 245);
   doc.setDrawColor(212, 212, 216);
-  doc.roundedRect(14, 28, pageWidth - 28, 18, 2, 2, 'FD');
+  doc.roundedRect(14, 29, pageWidth - 28, 18, 2, 2, 'FD');
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   doc.setTextColor(39, 39, 42);
 
   // KPI 1: Qtd Notas
-  doc.text(`TOTAL DE NOTAS:`, 20, 35);
+  const kpi1Title = options.agenteFilter && options.agenteFilter !== 'ALL' ? `AGENTE (${options.agenteFilter.toUpperCase()}):` : `TOTAL DE NOTAS:`;
+  doc.text(kpi1Title, 20, 36);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(9, 9, 11);
-  doc.text(`${totalRecords} nota(s)`, 20, 41);
+  doc.text(`${totalRecords} nota(s)`, 20, 42);
 
   // KPI 2: Total Bruto
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(39, 39, 42);
-  doc.text(`VALOR TOTAL:`, 80, 35);
+  doc.text(`VALOR TOTAL:`, 85, 36);
   doc.setTextColor(16, 185, 129); // Emerald
-  doc.text(`${formatCurrency(totalValor)}`, 80, 41);
+  doc.text(`${formatCurrency(totalValor)}`, 85, 42);
 
   // KPI 3: Total Pago
   doc.setTextColor(39, 39, 42);
-  doc.text(`PAGO / LIQUIDADO:`, 150, 35);
+  doc.text(`PAGO / LIQUIDADO:`, 150, 36);
   doc.setTextColor(37, 99, 235); // Blue
-  doc.text(`${formatCurrency(totalPaid)} (${paidRecords.length})`, 150, 41);
+  doc.text(`${formatCurrency(totalPaid)} (${paidRecords.length})`, 150, 42);
 
   // KPI 4: Total Pendente
   doc.setTextColor(39, 39, 42);
-  doc.text(`PENDENTE / A RECEBER:`, 220, 35);
+  doc.text(`PENDENTE / A RECEBER:`, 220, 36);
   doc.setTextColor(225, 29, 72); // Rose
-  doc.text(`${formatCurrency(totalPending)} (${pendingRecords.length})`, 220, 41);
+  doc.text(`${formatCurrency(totalPending)} (${pendingRecords.length})`, 220, 42);
 
   // Table Columns & Rows
   const tableHead = [
@@ -93,6 +110,7 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
       'Vencimento',
       'Clube',
       'Atleta',
+      'Agente(s)',
       'Tipo / Serviço',
       'Nº Nota Fiscal',
       'Parc.',
@@ -105,11 +123,14 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
   const tableBody = records.map((r) => {
     const cleaned = cleanClubeAndAtleta(r.clube, r.atleta, r.clienteNome);
     const isPaid = r.pagoOuNao === 'SIM (PAGO)' || r.statusPagamento === 'Pago';
+    const agentesArr = (r.agentes && r.agentes.length > 0) ? r.agentes : r.captadores;
+    const agentesStr = (agentesArr && agentesArr.length > 0) ? agentesArr.join(', ') : '-';
 
     return [
       formatDate(r.dataVencimentoNF),
       cleaned.clube || '-',
       cleaned.atleta || '-',
+      agentesStr,
       r.tipoContrato || r.servicoDescricao || 'Intermediação',
       r.numeroNF || 'Pendente',
       `${r.parcelaAtual || 1}/${r.totalParcelas || 1}`,
@@ -121,7 +142,7 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
 
   // Total Summary Footer Row inside autoTable
   const totalRow = [
-    { content: 'TOTAL DO PERÍODO:', colSpan: 5, styles: { fontStyle: 'bold', halign: 'right' } },
+    { content: 'TOTAL DO PERÍODO:', colSpan: 6, styles: { fontStyle: 'bold', halign: 'right' } },
     { content: `${totalRecords}`, styles: { fontStyle: 'bold', halign: 'center' } },
     { content: formatCurrency(totalValor), styles: { fontStyle: 'bold', halign: 'right', textColor: [16, 185, 129] } },
     { content: `Pago: ${formatCurrency(totalPaid)}`, colSpan: 2, styles: { fontStyle: 'bold', halign: 'center' } }
@@ -131,10 +152,10 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
     startY: 50,
     head: tableHead,
     body: [...tableBody, totalRow as any],
-    margin: { left: 14, right: 14, bottom: 15 },
+    margin: { left: 10, right: 10, bottom: 15 },
     styles: {
-      fontSize: 8.5,
-      cellPadding: 2.5,
+      fontSize: 8,
+      cellPadding: 2,
       font: 'helvetica',
       textColor: [39, 39, 42],
       lineColor: [228, 228, 231],
@@ -145,25 +166,26 @@ export function generateMonthlyPdf(records: CommissionRecord[], options: ExportP
       textColor: [255, 255, 255],
       fontStyle: 'bold',
       halign: 'left',
-      fontSize: 8.5
+      fontSize: 8
     },
     alternateRowStyles: {
       fillColor: [250, 250, 250]
     },
     columnStyles: {
-      0: { cellWidth: 24 }, // Vencimento
-      1: { cellWidth: 32 }, // Clube
-      2: { cellWidth: 42 }, // Atleta
-      3: { cellWidth: 35 }, // Tipo
-      4: { cellWidth: 35 }, // NF
-      5: { cellWidth: 16, halign: 'center' }, // Parc
-      6: { cellWidth: 30, halign: 'right', fontStyle: 'bold' }, // Valor
-      7: { cellWidth: 28, halign: 'center' }, // Status
-      8: { cellWidth: 26, halign: 'center' }  // Data Pgto
+      0: { cellWidth: 22 }, // Vencimento
+      1: { cellWidth: 30 }, // Clube
+      2: { cellWidth: 38 }, // Atleta
+      3: { cellWidth: 38 }, // Captador(es)
+      4: { cellWidth: 30 }, // Tipo
+      5: { cellWidth: 30 }, // NF
+      6: { cellWidth: 14, halign: 'center' }, // Parc
+      7: { cellWidth: 28, halign: 'right', fontStyle: 'bold' }, // Valor
+      8: { cellWidth: 25, halign: 'center' }, // Status Pagamento
+      9: { cellWidth: 22, halign: 'center' }  // Data Pgto
     },
     didParseCell: (data) => {
-      // Style status cell
-      if (data.section === 'body' && data.column.index === 7) {
+      // Style status cell (Status Pagamento is at index 8)
+      if (data.section === 'body' && data.column.index === 8) {
         if (data.cell.raw === 'PAGO') {
           data.cell.styles.textColor = [16, 185, 129];
           data.cell.styles.fontStyle = 'bold';

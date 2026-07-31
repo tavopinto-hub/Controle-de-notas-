@@ -26,6 +26,7 @@ export function generateExcelWorkbook(records: CommissionRecord[]): XLSX.WorkBoo
       'VALOR MMB': rec.valorComissao || 0,
       'Clube': cleaned.clube,
       'Atleta': cleaned.atleta,
+      'Agente(s)': (rec.agentes && rec.agentes.length > 0) ? rec.agentes.join(', ') : ((rec.captadores && rec.captadores.length > 0) ? rec.captadores.join(', ') : '-'),
       'Tipo de contrato': rec.tipoContrato || rec.servicoDescricao || 'Intermediação',
       'NF': rec.numeroNF || 'Não emitida',
       'Parcelas': `${rec.parcelaAtual || 1}/${rec.totalParcelas || 1}`,
@@ -38,12 +39,13 @@ export function generateExcelWorkbook(records: CommissionRecord[]): XLSX.WorkBoo
 
   const worksheet = XLSX.utils.json_to_sheet(dataForSheet);
 
-  // Set column widths for exact 11 columns
+  // Set column widths for exact 12 columns
   worksheet['!cols'] = [
     { wch: 14 }, // DATA
     { wch: 18 }, // VALOR MMB
     { wch: 28 }, // Clube
     { wch: 24 }, // Atleta
+    { wch: 28 }, // Captadores
     { wch: 22 }, // Tipo de contrato
     { wch: 16 }, // NF
     { wch: 12 }, // Parcelas

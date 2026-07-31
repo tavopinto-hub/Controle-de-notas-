@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { 
   FileText, Sparkles, CheckCircle2, AlertCircle, Loader2, Send, 
   ShieldCheck, Key, Info, AlignLeft, Calculator, Calendar, DollarSign,
-  Building2, User, RefreshCw, Plus, Trash2, ArrowRight, Upload, ClipboardCheck
+  Building2, User, RefreshCw, Plus, Trash2, ArrowRight, Upload, ClipboardCheck, Users
 } from 'lucide-react';
 import { ContractAnalysisResult, InstallmentInfo } from '../types';
+import { PREDEFINED_AGENTES, getAgenteColor } from '../constants/captadores';
 
 interface ContractUploaderProps {
   onContractExtracted: (result: ContractAnalysisResult, filename: string) => Promise<void>;
@@ -48,6 +49,7 @@ export const ContractUploader: React.FC<ContractUploaderProps> = ({
   const [dataContrato, setDataContrato] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [dataPrimeiraParcela, setDataPrimeiraParcela] = useState<string>('2026-03-15');
   const [tipoContrato, setTipoContrato] = useState<string>('Intermediação / Renovação');
+  const [selectedCaptadores, setSelectedCaptadores] = useState<string[]>([]);
   
   // Custom list of installments
   const [parcelas, setParcelas] = useState<InstallmentInfo[]>([
@@ -326,6 +328,8 @@ export const ContractUploader: React.FC<ContractUploaderProps> = ({
         valorComissao: valorTotal,
         dataVencimentoNF: dataPrimeiraParcela,
         observacoes: numParcelas > 1 ? `Cobrança dividida em ${numParcelas}x parcelas.` : 'Pagamento único.',
+        captadores: selectedCaptadores,
+        agentes: selectedCaptadores,
         eParcelado: numParcelas > 1,
         numeroParcelas: numParcelas,
         parcelas: parcelas
@@ -552,6 +556,47 @@ Data do Contrato: 01/02/2026.`;
               onChange={(e) => handleValorTotalChange(parseFloat(e.target.value) || 0)}
               className="w-full px-3 py-2 bg-emerald-50 border-2 border-zinc-900 text-xs sm:text-sm font-black text-emerald-950 focus:outline-none focus:ring-2 focus:ring-amber-400"
             />
+          </div>
+        </div>
+
+        {/* Agentes Envolvidos Block */}
+        <div className="bg-indigo-50/70 p-3 mb-4 border-2 border-zinc-900">
+          <div className="flex items-center justify-between mb-2">
+            <label className="font-black text-zinc-900 uppercase tracking-wider text-xs flex items-center space-x-1.5">
+              <Users className="w-4 h-4 text-indigo-700" />
+              <span>Agentes Envolvidos nesta Comissão</span>
+            </label>
+            <span className="text-[10px] font-bold text-indigo-900 bg-indigo-200 px-2 py-0.5 rounded border border-indigo-400">
+              {selectedCaptadores.length} selecionado(s)
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {PREDEFINED_AGENTES.map((cap) => {
+              const isSelected = selectedCaptadores.includes(cap);
+              const colors = getAgenteColor(cap);
+              return (
+                <button
+                  key={cap}
+                  type="button"
+                  onClick={() => {
+                    if (isSelected) {
+                      setSelectedCaptadores(prev => prev.filter(c => c !== cap));
+                    } else {
+                      setSelectedCaptadores(prev => [...prev, cap]);
+                    }
+                  }}
+                  className={`px-2.5 py-1 text-xs font-bold transition flex items-center space-x-1 border cursor-pointer select-none ${
+                    isSelected
+                      ? `bg-zinc-900 text-white border-zinc-900 shadow-[2px_2px_0px_0px_rgba(79,70,229,1)]`
+                      : `bg-white ${colors.text} ${colors.border} hover:bg-zinc-100`
+                  }`}
+                >
+                  <span>{isSelected ? '✓ ' : '+ '}</span>
+                  <span>{cap}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 

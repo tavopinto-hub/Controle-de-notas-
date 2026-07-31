@@ -19,7 +19,7 @@ import { CommissionRecord, ContractAnalysisResult, AppNotification, EmailSetting
 import { Sparkles, CheckCircle2, AlertTriangle, FileSpreadsheet, ExternalLink, RefreshCw, Trash2, LayoutDashboard, FileText } from 'lucide-react';
 import { initAuth, getCachedAccessToken } from './lib/googleAuth';
 import { getRecordYear } from './utils/dateUtils';
-import { normalizeRecordsClubeAtleta, cleanClubeAndAtleta } from './utils/athleteUtils';
+import { normalizeRecordsClubeAtleta, cleanClubeAndAtleta, propagateAthleteInfoToAllRecords, propagateAllAthletesAcrossAllRecords } from './utils/athleteUtils';
 import { fetchSheetRecordsDirectly } from './utils/sheetsClient';
 
 const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
@@ -562,10 +562,14 @@ export default function App() {
     handleSyncToSheets(updatedRecords).catch(e => console.warn('Sync Google Sheets notice:', e));
   };
 
-  const handleUpdateRecord = (updatedRecord: CommissionRecord) => {
-    const updatedList = records.map(r => r.id === updatedRecord.id ? updatedRecord : r);
+  const handleUpdateRecord = (updatedRecord: CommissionRecord, propagate: boolean = true) => {
+    let updatedList = records.map(r => r.id === updatedRecord.id ? updatedRecord : r);
+    if (propagate && updatedRecord.atleta && updatedRecord.atleta !== '-') {
+      const { updatedRecords } = propagateAthleteInfoToAllRecords(updatedRecord, updatedList);
+      updatedList = updatedRecords;
+    }
     setRecords(updatedList);
-    showToast(`Comissão de ${updatedRecord.clienteNome} atualizada.`);
+    showToast(`Comissão de ${updatedRecord.clienteNome || updatedRecord.clube || updatedRecord.atleta} atualizada.`);
     if (sheetSettings.spreadsheetId) {
       handleSyncToSheets(updatedList).catch(e => console.warn('Sync notice:', e));
     }
@@ -592,16 +596,23 @@ export default function App() {
     }
   };
 
-  const handleSaveRecordModal = (recordToSave: CommissionRecord) => {
+  const handleSaveRecordModal = (recordToSave: CommissionRecord, propagateToAllMonths: boolean = true) => {
     const exists = records.some(r => r.id === recordToSave.id);
     let updatedList: CommissionRecord[];
     if (exists) {
       updatedList = records.map(r => r.id === recordToSave.id ? recordToSave : r);
-      showToast('Registro atualizado na planilha.');
     } else {
       updatedList = [recordToSave, ...records];
-      showToast('Novo registro adicionado à planilha.');
     }
+
+    if (propagateToAllMonths && recordToSave.atleta && recordToSave.atleta !== '-') {
+      const { updatedRecords, updatedCount } = propagateAthleteInfoToAllRecords(recordToSave, updatedList);
+      updatedList = updatedRecords;
+      showToast(`✨ Dados atribuídos a ${updatedCount} parcela(s)/mês(es) do atleta ${recordToSave.atleta}!`, 'success');
+    } else {
+      showToast(exists ? 'Registro atualizado na planilha.' : 'Novo registro adicionado à planilha.');
+    }
+
     setRecords(updatedList);
     if (sheetSettings.spreadsheetId) {
       handleSyncToSheets(updatedList).catch(e => console.warn('Sync modal notice:', e));
@@ -769,6 +780,7 @@ export default function App() {
         isOpen={isRecordModalOpen}
         onClose={() => setIsRecordModalOpen(false)}
         record={selectedRecord}
+        allRecords={records}
         onSave={handleSaveRecordModal}
         onDelete={handleDeleteRecord}
       />
