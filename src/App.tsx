@@ -168,27 +168,34 @@ export default function App() {
   });
 
   const [sheetSettings, setSheetSettings] = useState<GoogleSheetSettings>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_SHEETS);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {
-      console.error(e);
-    }
-    return {
-      spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4/edit?pli=1&gid=0#gid=0',
-      spreadsheetId: '1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4',
+    const defaultSettings: GoogleSheetSettings = {
+      spreadsheetUrl: 'https://docs.google.com/spreadsheets/d/1a3htxEDuwXFKlP1EZLT8ANAOYnY-oXX_pejinjDHK1A/edit?gid=0#gid=0',
+      spreadsheetId: '1a3htxEDuwXFKlP1EZLT8ANAOYnY-oXX_pejinjDHK1A',
       sheetName: 'Página1',
       autoSyncOnUpload: true,
       isConnected: true,
       lastSyncedAt: new Date().toISOString()
     };
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_SHEETS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (!parsed.spreadsheetId || parsed.spreadsheetId === '1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4') {
+          return { ...parsed, ...defaultSettings };
+        }
+        return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return defaultSettings;
   });
 
   const [notifications, setNotifications] = useState<AppNotification[]>([
     {
       id: 'notif-1',
       titulo: 'Sincronização Google Sheets Ativa',
-      mensagem: 'Sua planilha do Google Sheets (ID: 1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4) foi conectada e atualizada com sucesso.',
+      mensagem: 'Sua planilha do Google Sheets (ID: 1a3htxEDuwXFKlP1EZLT8ANAOYnY-oXX_pejinjDHK1A) foi conectada e atualizada com sucesso.',
       tipo: 'sucesso',
       data: 'Hoje 09:30',
       lida: false
@@ -284,6 +291,10 @@ export default function App() {
   useEffect(() => {
     const unsub = subscribeToSheetSettings((remoteSheets) => {
       if (remoteSheets && remoteSheets.spreadsheetId) {
+        if (remoteSheets.spreadsheetId === '1uHR-aXyI5q_wOc_uH8v_dkDG7LP-uziyDutEcOhElB4') {
+          remoteSheets.spreadsheetId = '1a3htxEDuwXFKlP1EZLT8ANAOYnY-oXX_pejinjDHK1A';
+          remoteSheets.spreadsheetUrl = 'https://docs.google.com/spreadsheets/d/1a3htxEDuwXFKlP1EZLT8ANAOYnY-oXX_pejinjDHK1A/edit?gid=0#gid=0';
+        }
         setSheetSettings(prev => ({ ...prev, ...remoteSheets }));
       }
     });
