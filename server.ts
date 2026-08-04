@@ -1453,27 +1453,31 @@ app.post("/api/sheets/sync", async (req, res) => {
       "OBS"
     ];
 
-    const itemRows = (records || []).map((rec: any) => [
-      formatDateBr(rec.dataVencimentoNF),
-      rec.valorComissao || 0,
-      rec.clube || rec.clienteNome || '-',
-      rec.atleta || '-',
-      rec.tipoContrato || rec.servicoDescricao || 'Intermediação',
-      rec.numeroNF || 'Não emitida',
-      `${rec.parcelaAtual || 1}/${rec.totalParcelas || 1}`,
-      rec.dataPagamento ? formatDateBr(rec.dataPagamento) : 'Pendente',
-      rec.pagoOuNao || (rec.statusPagamento === 'Pago' ? 'SIM (PAGO)' : 'NÃO'),
-      formatDateBr(rec.dataContrato || rec.criadoEm?.split('T')[0]),
-      rec.observacoes || ''
-    ]);
+    const itemRows = (records || []).map((rec: any) => {
+      const cleaned = cleanClubeAndAtletaInServer(rec.clube, rec.atleta, rec.clienteNome);
+      return [
+        formatDateBr(rec.dataVencimentoNF),
+        rec.valorComissao || 0,
+        cleaned.clube,
+        cleaned.atleta,
+        rec.tipoContrato || rec.servicoDescricao || 'Intermediação',
+        rec.numeroNF || 'Não emitida',
+        `${rec.parcelaAtual || 1}/${rec.totalParcelas || 1}`,
+        rec.dataPagamento ? formatDateBr(rec.dataPagamento) : (rec.statusPagamento === 'Pago' ? 'Pago' : 'Pendente'),
+        rec.pagoOuNao || (rec.statusPagamento === 'Pago' ? 'SIM (PAGO)' : 'NÃO'),
+        formatDateBr(rec.dataContrato || rec.criadoEm?.split('T')[0]),
+        rec.observacoes || ''
+      ];
+    });
 
     // 1. Try Google Apps Script WebApp direct execution if configured
     if (webAppUrl && webAppUrl.startsWith("http")) {
       try {
         console.log(`[Google Sheets] Sincronizando via Google Apps Script WebApp: ${webAppUrl}`);
-        const appRes = await fetch(webAppUrl, {
+        let appRes = await fetch(webAppUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          redirect: "manual",
           body: JSON.stringify({
             action: "sync",
             spreadsheetId,
@@ -1483,8 +1487,27 @@ app.post("/api/sheets/sync", async (req, res) => {
             rows: itemRows
           })
         });
+
+        // Handle HTTP 302/301 redirects from Google Apps Script manually to preserve POST method
+        if (appRes.status >= 300 && appRes.status < 400) {
+          const redirectUrl = appRes.headers.get("location");
+          if (redirectUrl) {
+            appRes = await fetch(redirectUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: "sync",
+                spreadsheetId,
+                sheetName,
+                headers,
+                records,
+                rows: itemRows
+              })
+            });
+          }
+        }
+
         if (appRes.ok) {
-          const appData = await appRes.json().catch(() => ({ success: true }));
           return res.json({
             success: true,
             message: `Sincronizado com sucesso na planilha via Google Apps Script! (${itemRows.length} registros)`,
@@ -1499,61 +1522,77 @@ app.post("/api/sheets/sync", async (req, res) => {
 
     // 2. Try Google Sheets API v4 with OAuth token
     if (accessToken) {
-      const sheets = getSheetsClient(accessToken);
-      if (sheets && spreadsheetId) {
-        let hasHeader = false;
-        try {
-          const getHead = await sheets.spreadsheets.values.get({
-            spreadsheetId,
-            range: "A1:K1"
-          });
-          if (getHead.data.values && getHead.data.values.length > 0 && getHead.data.values[0].length > 0) {
-            hasHeader = true;
-          }
-        } catch (e) {
-          hasHeader = false;
-        }
-
-        let valuesToWrite;
-        let startCell = "A1";
-
-        if (hasHeader) {
+      try {
+        const sheets = getSheetsClient(accessToken);
+        if (sheets && spreadsheetId) {
+          let hasHeader = false;
           try {
-            await sheets.spreadsheets.values.clear({
+            const getHead = await sheets.spreadsheets.values.get({
               spreadsheetId,
-              range: "A2:K1000"
+              range: "A1:K1"
             });
+            if (getHead.data.values && getHead.data.values.length > 0 && getHead.data.values[0].length > 0) {
+              hasHeader = true;
+            }
           } catch (e) {
-            // ignore clear error
+            hasHeader = false;
           }
-          valuesToWrite = itemRows;
-          startCell = "A2";
-        } else {
-          valuesToWrite = [headers, ...itemRows];
-          startCell = "A1";
+
+          let valuesToWrite;
+          let startCell = "A1";
+
+          if (hasHeader) {
+            try {
+              await sheets.spreadsheets.values.clear({
+                spreadsheetId,
+                range: "A2:K1000"
+              });
+            } catch (e) {
+              // ignore clear error
+            }
+            valuesToWrite = itemRows;
+            startCell = "A2";
+          } else {
+            valuesToWrite = [headers, ...itemRows];
+            startCell = "A1";
+          }
+
+          await sheets.spreadsheets.values.update({
+            spreadsheetId,
+            range: startCell,
+            valueInputOption: "USER_ENTERED",
+            requestBody: { values: valuesToWrite }
+          });
+
+          return res.json({
+            success: true,
+            message: `Sincronizado com sucesso na planilha via Google Sheets API! (${itemRows.length} registros)`,
+            updatedRows: itemRows.length,
+            spreadsheetId
+          });
         }
-
-        await sheets.spreadsheets.values.update({
-          spreadsheetId,
-          range: startCell,
-          valueInputOption: "USER_ENTERED",
-          requestBody: { values: valuesToWrite }
-        });
-
-        return res.json({
-          success: true,
-          message: `Sincronizado com sucesso na planilha via Google Sheets API! (${itemRows.length} registros)`,
-          updatedRows: itemRows.length,
-          spreadsheetId
+      } catch (sheetsApiErr: any) {
+        console.error("Erro na API do Google Sheets:", sheetsApiErr?.message || sheetsApiErr);
+        const errMsg = String(sheetsApiErr?.message || '');
+        if (errMsg.includes('401') || errMsg.includes('invalid_grant') || errMsg.includes('Invalid Credentials') || errMsg.includes('Unauthenticated')) {
+          return res.status(401).json({
+            success: false,
+            authRequired: true,
+            error: "Sua autorização da conta Google expirou. Clique no botão 'Sheets' para autorizar com 1 clique."
+          });
+        }
+        return res.status(500).json({
+          success: false,
+          error: `Erro na planilha Google Sheets: ${sheetsApiErr?.message || 'Falha de gravação.'}`
         });
       }
     }
 
-    // 3. Fallback: acknowledge and save state locally
-    return res.json({
-      success: true,
-      syncedLocally: true,
-      message: `Inclusão registrada no sistema (${itemRows.length} comissão/ões). Conecte com o Google no modal para envio automático à nuvem.`,
+    // 3. Fallback when neither accessToken nor webAppUrl was provided or valid
+    return res.status(401).json({
+      success: false,
+      authRequired: true,
+      message: `Registro salvo no aplicativo (${itemRows.length} registros). Para enviar automaticamente para sua planilha no Google Sheets, clique no botão 'Sheets' e autorize sua conta Google.`,
       updatedRows: itemRows.length
     });
 

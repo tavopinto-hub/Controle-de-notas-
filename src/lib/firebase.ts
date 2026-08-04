@@ -12,7 +12,7 @@ import {
   Unsubscribe
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { CommissionRecord } from '../types';
+import { CommissionRecord, GoogleSheetSettings, EmailSettings } from '../types';
 
 const app = initializeApp(firebaseConfig);
 export const db = (firebaseConfig as any).firestoreDatabaseId
@@ -85,6 +85,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 const COLLECTION_RECORDS = 'commission_records';
+const COLLECTION_SETTINGS = 'app_settings';
 
 let hasInitialized = false;
 
@@ -134,7 +135,7 @@ export async function saveRecordToFirestore(record: CommissionRecord): Promise<v
 }
 
 /**
- * Batch saves multiple records to Firestore (in chunks of 450 to avoid Firestore 500 ops limit).
+ * Batch saves multiple records to Firestore (in chunks of 400 to avoid Firestore 500 ops limit).
  */
 export async function saveBatchRecordsToFirestore(records: CommissionRecord[]): Promise<void> {
   if (!records.length) return;
@@ -174,3 +175,68 @@ export async function deleteRecordFromFirestore(recordId: string): Promise<void>
 export async function seedFirestoreRecords(records: CommissionRecord[]): Promise<void> {
   await saveBatchRecordsToFirestore(records);
 }
+
+/**
+ * Subscribes to real-time Google Sheet settings changes across all devices.
+ */
+export function subscribeToSheetSettings(
+  onUpdate: (settings: GoogleSheetSettings) => void
+): Unsubscribe {
+  const docRef = doc(db, COLLECTION_SETTINGS, 'sheets');
+  return onSnapshot(
+    docRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        onUpdate(docSnap.data() as GoogleSheetSettings);
+      }
+    },
+    (error) => {
+      console.warn('Real-time sheet settings subscription error:', error);
+    }
+  );
+}
+
+/**
+ * Saves Google Sheet settings to Firestore for cross-device synchronization.
+ */
+export async function saveSheetSettingsToFirestore(settings: GoogleSheetSettings): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTION_SETTINGS, 'sheets');
+    await setDoc(docRef, settings, { merge: true });
+  } catch (error) {
+    console.warn('Failed to save sheet settings to Firestore:', error);
+  }
+}
+
+/**
+ * Subscribes to real-time Email settings changes across all devices.
+ */
+export function subscribeToEmailSettings(
+  onUpdate: (settings: EmailSettings) => void
+): Unsubscribe {
+  const docRef = doc(db, COLLECTION_SETTINGS, 'email');
+  return onSnapshot(
+    docRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        onUpdate(docSnap.data() as EmailSettings);
+      }
+    },
+    (error) => {
+      console.warn('Real-time email settings subscription error:', error);
+    }
+  );
+}
+
+/**
+ * Saves Email settings to Firestore for cross-device synchronization.
+ */
+export async function saveEmailSettingsToFirestore(settings: EmailSettings): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTION_SETTINGS, 'email');
+    await setDoc(docRef, settings, { merge: true });
+  } catch (error) {
+    console.warn('Failed to save email settings to Firestore:', error);
+  }
+}
+

@@ -18,7 +18,7 @@ import { DuplicateModal, DuplicateOptions } from './components/DuplicateModal';
 import { initialRecords } from './data/initialRecords';
 import { CommissionRecord, ContractAnalysisResult, AppNotification, EmailSettings, GoogleSheetSettings } from './types';
 import { Sparkles, CheckCircle2, AlertTriangle, FileSpreadsheet, ExternalLink, RefreshCw, Trash2, LayoutDashboard, FileText } from 'lucide-react';
-import { initAuth, getCachedAccessToken } from './lib/googleAuth';
+import { initAuth, getCachedAccessToken, googleSignIn } from './lib/googleAuth';
 import { getRecordYear } from './utils/dateUtils';
 import { normalizeRecordsClubeAtleta, cleanClubeAndAtleta, propagateAthleteInfoToAllRecords, propagateAllAthletesAcrossAllRecords } from './utils/athleteUtils';
 import { fetchSheetRecordsDirectly } from './utils/sheetsClient';
@@ -27,7 +27,11 @@ import {
   saveRecordToFirestore, 
   saveBatchRecordsToFirestore, 
   deleteRecordFromFirestore,
-  seedFirestoreRecords
+  seedFirestoreRecords,
+  subscribeToSheetSettings,
+  saveSheetSettingsToFirestore,
+  subscribeToEmailSettings,
+  saveEmailSettingsToFirestore
 } from './lib/firebase';
 
 const STORAGE_KEY_RECORDS = 'app_commission_records_v1';
@@ -246,7 +250,7 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = subscribeToRecords(
       (firestoreRecords) => {
-        if (Array.isArray(firestoreRecords) && firestoreRecords.length > 0) {
+        if (Array.isArray(firestoreRecords)) {
           setRecords(normalizeRecordsClubeAtleta(deduplicateRecords(firestoreRecords)));
         }
       },
@@ -276,23 +280,45 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Sync emailSettings to localStorage
+  // Real-time Sheet Settings synchronization across all devices (iPhone, iPad, Desktop)
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_EMAIL, JSON.stringify(emailSettings));
-    } catch (e) {
-      console.error(e);
-    }
-  }, [emailSettings]);
+    const unsub = subscribeToSheetSettings((remoteSheets) => {
+      if (remoteSheets && remoteSheets.spreadsheetId) {
+        setSheetSettings(prev => ({ ...prev, ...remoteSheets }));
+      }
+    });
+    return () => unsub();
+  }, []);
 
-  // Sync sheetSettings to localStorage
+  // Sync sheetSettings to localStorage & Firestore
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY_SHEETS, JSON.stringify(sheetSettings));
+      saveSheetSettingsToFirestore(sheetSettings).catch(e => console.warn("Firestore sheet settings sync:", e));
     } catch (e) {
       console.error(e);
     }
   }, [sheetSettings]);
+
+  // Real-time Email Settings synchronization across all devices
+  useEffect(() => {
+    const unsub = subscribeToEmailSettings((remoteEmail) => {
+      if (remoteEmail && remoteEmail.userEmail) {
+        setEmailSettings(prev => ({ ...prev, ...remoteEmail }));
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  // Sync emailSettings to localStorage & Firestore
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_EMAIL, JSON.stringify(emailSettings));
+      saveEmailSettingsToFirestore(emailSettings).catch(e => console.warn("Firestore email settings sync:", e));
+    } catch (e) {
+      console.error(e);
+    }
+  }, [emailSettings]);
 
   // Initialize Auth listener & auto-import
   useEffect(() => {
@@ -317,12 +343,13 @@ export default function App() {
   };
 
   // Google Sheets Sync handler
-  const handleSyncToSheets = async (targetRecords?: CommissionRecord[]) => {
+  const handleSyncToSheets = async (targetRecords?: CommissionRecord[], isUserInitiated: boolean = false) => {
     setIsSheetsSyncing(true);
     try {
       const recordsToSync = targetRecords || records;
-      const activeToken = sheetSettings.accessToken || getCachedAccessToken();
-      const res = await fetch('/api/sheets/sync', {
+      let activeToken = sheetSettings.accessToken || getCachedAccessToken();
+
+      let res = await fetch('/api/sheets/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -334,9 +361,45 @@ export default function App() {
         })
       });
 
-      const data = await res.json();
+      let data = await res.json();
+
+      // If auth is required and user initiated, trigger 1-click Google popup login
+      if (data.authRequired && isUserInitiated) {
+        try {
+          const { accessToken } = await googleSignIn();
+          activeToken = accessToken;
+          const updatedSettings = {
+            ...sheetSettings,
+            accessToken,
+            isConnected: true
+          };
+          setSheetSettings(updatedSettings);
+          localStorage.setItem(STORAGE_KEY_SHEETS, JSON.stringify(updatedSettings));
+
+          // Retry sync with new token
+          res = await fetch('/api/sheets/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              spreadsheetId: updatedSettings.spreadsheetId,
+              sheetName: updatedSettings.sheetName,
+              webAppUrl: updatedSettings.webAppUrl,
+              accessToken: updatedSettings.accessToken,
+              records: recordsToSync
+            })
+          });
+          data = await res.json();
+        } catch (authErr) {
+          console.warn("User cancelled or failed Google Sign in:", authErr);
+        }
+      }
+
       if (!res.ok || !data.success) {
-        throw new Error(data.error || data.details || 'Falha ao sincronizar com Google Sheets');
+        if (data.authRequired) {
+          showToast(`⚠️ Clique em 'Sheets' para autorizar sua conta Google e enviar os dados para a planilha.`, 'info');
+          return;
+        }
+        throw new Error(data.error || data.message || 'Falha ao sincronizar com Google Sheets');
       }
 
       setSheetSettings(prev => ({
@@ -345,14 +408,10 @@ export default function App() {
         isConnected: true
       }));
 
-      if (data.simulated) {
-        console.log("Inclusão salva no app.");
-      } else {
-        showToast(`Google Sheets atualizado em tempo real (${recordsToSync.length} comissões)!`, 'success');
-      }
+      showToast(`Google Sheets atualizado em tempo real (${recordsToSync.length} comissões)!`, 'success');
     } catch (err: any) {
       console.error("Erro ao sincronizar com Google Sheets:", err);
-      showToast(`Atenção ao alimentar Google Sheets: ${err.message || 'Verifique o link'}`, 'info');
+      showToast(`Atenção ao alimentar Google Sheets: ${err.message || 'Autorize a conta no modal Sheets'}`, 'info');
     } finally {
       setIsSheetsSyncing(false);
     }
@@ -736,6 +795,7 @@ export default function App() {
       <Header
         notifications={notifications}
         emailSettings={emailSettings}
+        sheetSettings={sheetSettings}
         onOpenEmailModal={() => setIsEmailModalOpen(true)}
         onOpenSheetsModal={() => setIsSheetsModalOpen(true)}
         onOpenNotifications={() => setIsNotificationsOpen(true)}

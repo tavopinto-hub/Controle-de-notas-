@@ -1,11 +1,12 @@
 import React from 'react';
 import { Bell, Mail, Sparkles, FileSpreadsheet } from 'lucide-react';
-import { AppNotification, EmailSettings } from '../types';
+import { AppNotification, EmailSettings, GoogleSheetSettings } from '../types';
 import mbSportsLogo from '../assets/images/mb_sports_official_logo_1784828804195.jpg';
 
 interface HeaderProps {
   notifications: AppNotification[];
   emailSettings: EmailSettings;
+  sheetSettings?: GoogleSheetSettings;
   onOpenEmailModal: () => void;
   onOpenSheetsModal: () => void;
   onOpenNotifications: () => void;
@@ -16,6 +17,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   notifications,
   emailSettings,
+  sheetSettings,
   onOpenEmailModal,
   onOpenSheetsModal,
   onOpenNotifications,
@@ -62,6 +64,9 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <FileSpreadsheet className="w-4 h-4 text-zinc-950 flex-shrink-0" />
             <span className="inline text-[11px] sm:text-xs">Sheets</span>
+            <span className={`w-2.5 h-2.5 rounded-full border border-zinc-900 flex-shrink-0 ${
+              sheetSettings?.accessToken || sheetSettings?.webAppUrl ? 'bg-emerald-950' : 'bg-amber-300 animate-pulse'
+            }`} title={sheetSettings?.accessToken ? "Conectado ao Google Sheets" : "Clique para conectar"} />
           </button>
 
           {/* E-mail configuration status button */}

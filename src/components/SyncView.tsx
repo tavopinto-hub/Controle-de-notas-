@@ -21,7 +21,7 @@ interface SyncViewProps {
   records: CommissionRecord[];
   sheetSettings: GoogleSheetSettings;
   onSaveSettings: (settings: GoogleSheetSettings) => void;
-  onSyncToSheets: (recordsToSync?: CommissionRecord[]) => Promise<void>;
+  onSyncToSheets: (recordsToSync?: CommissionRecord[], isUserInitiated?: boolean) => Promise<void>;
   onImportFromSheets: () => Promise<void>;
   isSyncing: boolean;
   onDeduplicateRecords: () => void;
@@ -104,10 +104,10 @@ export const SyncView: React.FC<SyncViewProps> = ({
   const handleManualSync = async () => {
     try {
       setStatusMsg(null);
-      await onSyncToSheets();
+      await onSyncToSheets(undefined, true);
       setStatusMsg({
         type: 'success',
-        text: `Sincronização concluída com sucesso no Google Sheets! ${records.length} comissões gravadas.`,
+        text: `Sincronização realizada com sucesso no Google Sheets! ${records.length} comissões gravadas.`,
       });
     } catch (err: any) {
       setStatusMsg({
@@ -134,23 +134,17 @@ export const SyncView: React.FC<SyncViewProps> = ({
   };
 
   const columnsMapping = [
-    { col: 'A', name: 'Item', example: '1, 2, 3...' },
-    { col: 'B', name: 'Nº Contrato', example: 'CT-2026/089 (1/3)' },
-    { col: 'C', name: 'Cliente / Razão Social', example: 'Márcio Bittencourt Sports' },
-    { col: 'D', name: 'Clube', example: 'CR Flamengo' },
-    { col: 'E', name: 'Atleta', example: 'Gabriel Barbosa' },
-    { col: 'F', name: 'CNPJ / CPF', example: '00.000.000/0001-00' },
-    { col: 'G', name: 'Descrição do Serviço', example: 'Comissão sobre intermediação' },
-    { col: 'H', name: 'Valor Contrato (R$)', example: 'R$ 150.000,00' },
-    { col: 'I', name: '% Comissão', example: '10%' },
-    { col: 'J', name: 'Valor Comissão (R$)', example: 'R$ 15.000,00' },
-    { col: 'K', name: 'Vencimento NF', example: '2026-08-15' },
-    { col: 'L', name: 'Status NF', example: 'Não emitida / Emitida' },
-    { col: 'M', name: 'Nº NF', example: 'NF-00123' },
-    { col: 'N', name: 'Data Emissão NF', example: '2026-08-10' },
-    { col: 'O', name: 'Status Pagamento', example: 'Aguardando / Pago' },
-    { col: 'P', name: 'Data Pagamento', example: '2026-08-12' },
-    { col: 'Q', name: 'Observações', example: 'Lido via IA Gemini PDF' },
+    { col: 'A', name: 'DATA', example: '15/08/2026 (Vencimento)' },
+    { col: 'B', name: 'VALOR MMB', example: 'R$ 15.000,00' },
+    { col: 'C', name: 'Clube', example: 'CR Flamengo' },
+    { col: 'D', name: 'Atleta', example: 'Gabriel Barbosa' },
+    { col: 'E', name: 'Tipo de contrato', example: 'Intermediação Comercial' },
+    { col: 'F', name: 'NF', example: 'NF-00123 / Não emitida' },
+    { col: 'G', name: 'Parcelas', example: '1/3, 2/3' },
+    { col: 'H', name: 'Pagamento', example: '20/08/2026 / Pendente' },
+    { col: 'I', name: 'PAGO OU NÃO', example: 'SIM (PAGO) / NÃO' },
+    { col: 'J', name: 'Data do contrato', example: '10/08/2026' },
+    { col: 'K', name: 'OBS', example: 'Comissão sobre contrato profissional' },
   ];
 
   return (
