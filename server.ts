@@ -1484,7 +1484,7 @@ app.post("/api/sheets/sync", async (req, res) => {
         let appRes = await fetch(webAppUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          redirect: "manual",
+          redirect: "follow",
           body: JSON.stringify({
             action: "sync",
             spreadsheetId: cleanId,
@@ -1495,23 +1495,17 @@ app.post("/api/sheets/sync", async (req, res) => {
           })
         });
 
-        // Handle HTTP 302/301 redirects from Google Apps Script manually to preserve POST method
-        if (appRes.status >= 300 && appRes.status < 400) {
-          const redirectUrl = appRes.headers.get("location");
-          if (redirectUrl) {
-            appRes = await fetch(redirectUrl, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "sync",
-                spreadsheetId: cleanId,
-                sheetName,
-                headers,
-                records,
-                rows: itemRows
-              })
-            });
-          }
+        // If POST failed or redirect issue occurred, attempt GET fallback with query payload
+        if (!appRes.ok) {
+          const payload = encodeURIComponent(JSON.stringify({
+            action: "sync",
+            spreadsheetId: cleanId,
+            sheetName,
+            headers,
+            rows: itemRows
+          }));
+          const getUrl = `${webAppUrl}${webAppUrl.includes('?') ? '&' : '?'}data=${payload}`;
+          appRes = await fetch(getUrl, { method: "GET" });
         }
 
         if (appRes.ok) {

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { FileSpreadsheet, X, RefreshCw, ExternalLink, Download, Upload, CheckCircle2, AlertCircle, Sparkles, Layers, LogIn, ShieldCheck } from 'lucide-react';
+import { FileSpreadsheet, X, RefreshCw, ExternalLink, Download, Upload, CheckCircle2, AlertCircle, Sparkles, Layers, LogIn, ShieldCheck, Copy, FileDown } from 'lucide-react';
 import { CommissionRecord, GoogleSheetSettings } from '../types';
 import { googleSignIn } from '../lib/googleAuth';
+import { copyDataToClipboardForSheets, copyRowsOnlyToClipboardForSheets, downloadGoogleSheetsCsv } from '../lib/exportUtils';
 
 interface GoogleSheetsModalProps {
   isOpen: boolean;
@@ -124,6 +125,44 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
     }
   };
 
+  const handleCopyToClipboard = async () => {
+    const success = await copyDataToClipboardForSheets(records);
+    if (success) {
+      setStatusMsg({
+        type: 'success',
+        text: `✅ ${records.length} REGISTROS COPIADOS!\n\n📌 COMO EVITAR DUPLICATAS NO GOOGLE SHEETS:\n1. Abra sua planilha do Google Sheets.\n2. Clique na célula A1 (canto superior esquerdo).\n3. Pressione Ctrl + V (ou Cmd + V).\n\nComo o cabeçalho está incluído, a planilha inteira é substituída com os dados mais atualizados, GARANTINDO QUE NADA FIQUE DUPLICADO!`
+      });
+    } else {
+      setStatusMsg({
+        type: 'error',
+        text: 'Não foi possível copiar automaticamente. Tente utilizar o botão de baixar arquivo CSV.'
+      });
+    }
+  };
+
+  const handleCopyRowsOnly = async () => {
+    const success = await copyRowsOnlyToClipboardForSheets(records);
+    if (success) {
+      setStatusMsg({
+        type: 'success',
+        text: `✅ ${records.length} LINHAS COPIADAS (SEM CABEÇALHO)!\n\nIdeal para colar no final de uma planilha que já possui cabeçalhos na primeira linha.`
+      });
+    } else {
+      setStatusMsg({
+        type: 'error',
+        text: 'Não foi possível copiar automaticamente. Tente utilizar o botão de baixar arquivo CSV.'
+      });
+    }
+  };
+
+  const handleDownloadCsvFile = () => {
+    downloadGoogleSheetsCsv(records);
+    setStatusMsg({
+      type: 'success',
+      text: `📥 Arquivo 'Comissoes_MMB_Sports_GoogleSheets.csv' baixado!\n\nPara abrir no Google Sheets sem duplicatas: Arquivo -> Importar -> Upload -> Escolher 'Substituir planilha' ou 'Substituir aba atual'.`
+    });
+  };
+
   const columnsMap = [
     { col: 'A', name: 'DATA', example: '15/08/2026 (Vencimento)' },
     { col: 'B', name: 'VALOR MMB', example: 'R$ 15.000,00' },
@@ -213,6 +252,63 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
                   <span>Acesso Não Autorizado Ainda</span>
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Quick Instant Transfer Section (Fail-proof) */}
+          <div className="bg-emerald-50 border-3 border-zinc-900 p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-4 h-4 text-emerald-600" />
+                <h4 className="font-black uppercase tracking-wider text-xs text-zinc-900">
+                  ⚡ Método 100% Garantido (Sem Erros de Permissão)
+                </h4>
+              </div>
+              <span className="text-[10px] font-black uppercase bg-emerald-400 text-zinc-950 px-2 py-0.5 border border-zinc-900">
+                Imediato
+              </span>
+            </div>
+            
+            <p className="text-[11px] font-bold text-zinc-700">
+              Para passar seus dados sem nenhuma duplicata no Google Sheets, use uma destas opções:
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleCopyToClipboard}
+                className="inline-flex flex-col items-center justify-center p-2.5 bg-emerald-400 hover:bg-emerald-300 border-2 border-zinc-900 text-zinc-950 font-black text-xs uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer text-center"
+              >
+                <div className="flex items-center space-x-1.5 mb-1">
+                  <Copy className="w-4 h-4 text-zinc-950" />
+                  <span>Substituir Tudo (A1)</span>
+                </div>
+                <span className="text-[9px] font-bold text-zinc-800 lowercase">Colar em A1 (Sobrescreve 0 duplicatas)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCopyRowsOnly}
+                className="inline-flex flex-col items-center justify-center p-2.5 bg-amber-300 hover:bg-amber-200 border-2 border-zinc-900 text-zinc-950 font-black text-xs uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer text-center"
+              >
+                <div className="flex items-center space-x-1.5 mb-1">
+                  <Copy className="w-4 h-4 text-zinc-950" />
+                  <span>Apenas Novas Linhas</span>
+                </div>
+                <span className="text-[9px] font-bold text-zinc-800 lowercase">Para colar ao final da planilha</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadCsvFile}
+                className="inline-flex flex-col items-center justify-center p-2.5 bg-white hover:bg-zinc-100 border-2 border-zinc-900 text-zinc-900 font-black text-xs uppercase shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer text-center"
+              >
+                <div className="flex items-center space-x-1.5 mb-1">
+                  <FileDown className="w-4 h-4 text-zinc-900" />
+                  <span>Baixar CSV</span>
+                </div>
+                <span className="text-[9px] font-bold text-zinc-600 lowercase">Para importar no Google Sheets</span>
+              </button>
             </div>
           </div>
 

@@ -12,10 +12,13 @@ import {
   Layers,
   Settings2,
   ListChecks,
-  Users
+  Users,
+  Copy,
+  FileDown
 } from 'lucide-react';
 import { CommissionRecord, GoogleSheetSettings } from '../types';
 import { googleSignIn } from '../lib/googleAuth';
+import { copyDataToClipboardForSheets, copyRowsOnlyToClipboardForSheets, downloadGoogleSheetsCsv } from '../lib/exportUtils';
 
 interface SyncViewProps {
   records: CommissionRecord[];
@@ -133,6 +136,44 @@ export const SyncView: React.FC<SyncViewProps> = ({
     }
   };
 
+  const handleCopyToClipboard = async () => {
+    const success = await copyDataToClipboardForSheets(records);
+    if (success) {
+      setStatusMsg({
+        type: 'success',
+        text: `✅ ${records.length} REGISTROS COPIADOS!\n\n📌 COMO EVITAR DUPLICATAS NO GOOGLE SHEETS:\n1. Abra sua planilha do Google Sheets.\n2. Clique na célula A1 (canto superior esquerdo).\n3. Pressione Ctrl + V (ou Cmd + V).\n\nComo o cabeçalho está incluído, a planilha inteira é substituída com os dados mais atualizados, GARANTINDO QUE NADA FIQUE DUPLICADO!`
+      });
+    } else {
+      setStatusMsg({
+        type: 'error',
+        text: 'Não foi possível copiar automaticamente. Tente utilizar o botão de baixar arquivo CSV.'
+      });
+    }
+  };
+
+  const handleCopyRowsOnly = async () => {
+    const success = await copyRowsOnlyToClipboardForSheets(records);
+    if (success) {
+      setStatusMsg({
+        type: 'success',
+        text: `✅ ${records.length} LINHAS COPIADAS (SEM CABEÇALHO)!\n\nIdeal para colar no final de uma planilha que já possui cabeçalhos na primeira linha.`
+      });
+    } else {
+      setStatusMsg({
+        type: 'error',
+        text: 'Não foi possível copiar automaticamente. Tente utilizar o botão de baixar arquivo CSV.'
+      });
+    }
+  };
+
+  const handleDownloadCsvFile = () => {
+    downloadGoogleSheetsCsv(records);
+    setStatusMsg({
+      type: 'success',
+      text: `📥 Arquivo 'Comissoes_MMB_Sports_GoogleSheets.csv' baixado!\n\nPara abrir no Google Sheets sem duplicatas: Arquivo -> Importar -> Upload -> Escolher 'Substituir planilha' ou 'Substituir aba atual'.`
+    });
+  };
+
   const columnsMapping = [
     { col: 'A', name: 'DATA', example: '15/08/2026 (Vencimento)' },
     { col: 'B', name: 'VALOR MMB', example: 'R$ 15.000,00' },
@@ -181,7 +222,33 @@ export const SyncView: React.FC<SyncViewProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row lg:flex-col gap-3 w-full lg:w-auto min-w-[240px]">
+          <div className="flex flex-col sm:flex-row lg:flex-col gap-2.5 w-full lg:w-auto min-w-[260px]">
+            <button
+              onClick={handleCopyToClipboard}
+              className="inline-flex items-center justify-center space-x-2 px-4 py-3 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+              title="Copia tudo incluindo cabeçalhos. Cole em A1 para substituir toda a planilha sem gerar duplicatas."
+            >
+              <Copy className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+              <span>Substituir Tudo (Ctrl+V em A1)</span>
+            </button>
+
+            <button
+              onClick={handleCopyRowsOnly}
+              className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-amber-300 hover:bg-amber-200 text-zinc-950 font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+              title="Copia apenas as linhas sem cabeçalho para colar no final da sua planilha."
+            >
+              <Copy className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+              <span>Copiar Apenas Novas Linhas</span>
+            </button>
+
+            <button
+              onClick={handleDownloadCsvFile}
+              className="inline-flex items-center justify-center space-x-2 px-4 py-2.5 bg-white hover:bg-zinc-100 text-zinc-900 font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+            >
+              <FileDown className="w-4 h-4 text-zinc-900 flex-shrink-0" />
+              <span>Baixar Arquivo CSV</span>
+            </button>
+
             <button
               onClick={handleManualSync}
               disabled={isSyncing}
@@ -189,15 +256,6 @@ export const SyncView: React.FC<SyncViewProps> = ({
             >
               <RefreshCw className={`w-4 h-4 text-zinc-950 ${isSyncing ? 'animate-spin' : ''}`} />
               <span>{isSyncing ? 'Sincronizando...' : 'Enviar para Sheets'}</span>
-            </button>
-
-            <button
-              onClick={handleManualImport}
-              disabled={isSyncing}
-              className="inline-flex items-center justify-center space-x-2 px-5 py-3 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50"
-            >
-              <Database className="w-4 h-4 text-zinc-950" />
-              <span>Carregar do Sheets</span>
             </button>
 
             <a

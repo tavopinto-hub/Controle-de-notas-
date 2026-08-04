@@ -12,6 +12,7 @@ import { deduplicateRecords } from '../App';
 import { generateMonthlyPdf } from '../utils/pdfExport';
 import { PREDEFINED_AGENTES, getAgenteColor } from '../constants/captadores';
 import { PdfExportModal } from './PdfExportModal';
+import { copyDataToClipboardForSheets, downloadGoogleSheetsCsv } from '../lib/exportUtils';
 
 const getCurrentIsoMonth = (): string => {
   const now = new Date();
@@ -415,6 +416,20 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
           >
             <Users className="w-3.5 h-3.5 text-zinc-950 flex-shrink-0" />
             <span>PDF por Agente / Filtros ⚙️</span>
+          </button>
+
+          <button
+            onClick={async () => {
+              const ok = await copyDataToClipboardForSheets(filteredRecords);
+              if (ok) {
+                alert(`✅ ${filteredRecords.length} LINHAS COPIADAS COM SUCESSO!\n\nPasso Final: Abra sua planilha no Google Sheets, selecione a célula A1 e aperte Ctrl + V (ou Cmd + V) para colar todas as colunas automaticamente!`);
+              }
+            }}
+            title="Copiar todas as colunas formatadas para colar na célula A1 do Google Sheets"
+            className="inline-flex items-center justify-center space-x-1.5 px-3 py-2 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 border-2 border-zinc-900 text-xs font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 min-h-[40px] cursor-pointer"
+          >
+            <Copy className="w-4 h-4 text-zinc-950 flex-shrink-0" />
+            <span>Copiar para Sheets (Ctrl+V)</span>
           </button>
 
           <button
