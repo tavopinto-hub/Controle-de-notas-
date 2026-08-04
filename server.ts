@@ -1431,6 +1431,13 @@ app.post("/api/sheets/sync", async (req, res) => {
   try {
     const { spreadsheetId, records, accessToken, sheetName = "Página1", webAppUrl } = req.body;
 
+    // Clean spreadsheetId if a full Google Sheets URL was provided
+    let cleanId = (spreadsheetId || '').trim();
+    if (cleanId.includes('/d/')) {
+      const match = cleanId.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      if (match) cleanId = match[1];
+    }
+
     const formatDateBr = (d?: string) => {
       if (!d) return '';
       if (d.includes('/')) return d;
@@ -1480,7 +1487,7 @@ app.post("/api/sheets/sync", async (req, res) => {
           redirect: "manual",
           body: JSON.stringify({
             action: "sync",
-            spreadsheetId,
+            spreadsheetId: cleanId,
             sheetName,
             headers,
             records,
@@ -1497,7 +1504,7 @@ app.post("/api/sheets/sync", async (req, res) => {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 action: "sync",
-                spreadsheetId,
+                spreadsheetId: cleanId,
                 sheetName,
                 headers,
                 records,
@@ -1512,7 +1519,7 @@ app.post("/api/sheets/sync", async (req, res) => {
             success: true,
             message: `Sincronizado com sucesso na planilha via Google Apps Script! (${itemRows.length} registros)`,
             updatedRows: itemRows.length,
-            spreadsheetId
+            spreadsheetId: cleanId
           });
         }
       } catch (scriptErr) {
@@ -1521,45 +1528,60 @@ app.post("/api/sheets/sync", async (req, res) => {
     }
 
     // 2. Try Google Sheets API v4 with OAuth token
-    if (accessToken) {
+    if (accessToken && cleanId) {
       try {
         const sheets = getSheetsClient(accessToken);
-        if (sheets && spreadsheetId) {
+        if (sheets) {
+          const cleanTab = (sheetName || "Página1").trim().replace(/'/g, "''");
+          const sheetPrefix = cleanTab ? `'${cleanTab}'!` : "";
+
           let hasHeader = false;
           try {
+            const headRange = sheetPrefix ? `${sheetPrefix}A1:K1` : "A1:K1";
             const getHead = await sheets.spreadsheets.values.get({
-              spreadsheetId,
-              range: "A1:K1"
+              spreadsheetId: cleanId,
+              range: headRange
             });
             if (getHead.data.values && getHead.data.values.length > 0 && getHead.data.values[0].length > 0) {
               hasHeader = true;
             }
           } catch (e) {
-            hasHeader = false;
+            try {
+              const getHead = await sheets.spreadsheets.values.get({
+                spreadsheetId: cleanId,
+                range: "A1:K1"
+              });
+              if (getHead.data.values && getHead.data.values.length > 0 && getHead.data.values[0].length > 0) {
+                hasHeader = true;
+              }
+            } catch (e2) {
+              hasHeader = false;
+            }
           }
 
           let valuesToWrite;
-          let startCell = "A1";
+          let writeRange;
 
           if (hasHeader) {
             try {
+              const clearRange = sheetPrefix ? `${sheetPrefix}A2:K1000` : "A2:K1000";
               await sheets.spreadsheets.values.clear({
-                spreadsheetId,
-                range: "A2:K1000"
+                spreadsheetId: cleanId,
+                range: clearRange
               });
             } catch (e) {
               // ignore clear error
             }
             valuesToWrite = itemRows;
-            startCell = "A2";
+            writeRange = sheetPrefix ? `${sheetPrefix}A2` : "A2";
           } else {
             valuesToWrite = [headers, ...itemRows];
-            startCell = "A1";
+            writeRange = sheetPrefix ? `${sheetPrefix}A1` : "A1";
           }
 
           await sheets.spreadsheets.values.update({
-            spreadsheetId,
-            range: startCell,
+            spreadsheetId: cleanId,
+            range: writeRange,
             valueInputOption: "USER_ENTERED",
             requestBody: { values: valuesToWrite }
           });
@@ -1568,7 +1590,7 @@ app.post("/api/sheets/sync", async (req, res) => {
             success: true,
             message: `Sincronizado com sucesso na planilha via Google Sheets API! (${itemRows.length} registros)`,
             updatedRows: itemRows.length,
-            spreadsheetId
+            spreadsheetId: cleanId
           });
         }
       } catch (sheetsApiErr: any) {
@@ -1578,12 +1600,12 @@ app.post("/api/sheets/sync", async (req, res) => {
           return res.status(401).json({
             success: false,
             authRequired: true,
-            error: "Sua autorização da conta Google expirou. Clique no botão 'Sheets' para autorizar com 1 clique."
+            error: "Sua autorização da conta Google expirou. Clique no botão 'Sheets' e autorize a conta com 1 clique."
           });
         }
         return res.status(500).json({
           success: false,
-          error: `Erro na planilha Google Sheets: ${sheetsApiErr?.message || 'Falha de gravação.'}`
+          error: `Erro ao gravar no Google Sheets: ${sheetsApiErr?.message || 'Verifique se a planilha está compartilhada ou o ID está correto.'}`
         });
       }
     }
@@ -1592,7 +1614,7 @@ app.post("/api/sheets/sync", async (req, res) => {
     return res.status(401).json({
       success: false,
       authRequired: true,
-      message: `Registro salvo no aplicativo (${itemRows.length} registros). Para enviar automaticamente para sua planilha no Google Sheets, clique no botão 'Sheets' e autorize sua conta Google.`,
+      message: `Registro salvo no aplicativo (${itemRows.length} registros). Para enviar para sua planilha no Google Sheets, clique no botão 'Sheets' e autorize sua conta Google.`,
       updatedRows: itemRows.length
     });
 
