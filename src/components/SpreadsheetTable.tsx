@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Download, FileSpreadsheet, Search, Plus, Trash2, Edit2, CheckCircle2,
   AlertTriangle, Clock, Filter, ArrowUpDown, Send, FileText, ExternalLink, CopyX, UserCheck,
-  ChevronLeft, ChevronRight, Calendar, RotateCcw, X, FileDown, Users
+  ChevronLeft, ChevronRight, Calendar, RotateCcw, X, FileDown, Users, Copy
 } from 'lucide-react';
 import { CommissionRecord, StatusNF, StatusPagamento } from '../types';
 import { formatCurrency, formatDate, exportToExcel, exportToCSV } from '../utils/excel';
@@ -42,6 +42,7 @@ interface SpreadsheetTableProps {
   onTabChange?: (tab: 'all' | 'nao_emitida' | 'fora_prazo' | 'emitida' | 'nao_autorizada' | 'pago') => void;
   onUpdateRecord: (record: CommissionRecord) => void;
   onDeleteRecord: (id: string) => void;
+  onDuplicateRecord?: (record: CommissionRecord) => void;
   onAddNewRecord: () => void;
   onOpenEmailModal: () => void;
   onViewRecordDetail: (record: CommissionRecord) => void;
@@ -56,6 +57,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
   onTabChange,
   onUpdateRecord,
   onDeleteRecord,
+  onDuplicateRecord,
   onAddNewRecord,
   onOpenEmailModal,
   onViewRecordDetail,
@@ -913,14 +915,25 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
 
                 {/* Action Row */}
                 <div className="flex items-center justify-between pt-2 border-t-2 border-zinc-900 text-xs">
-                  <span className="text-[10px] font-mono text-zinc-500 truncate max-w-[160px]">
+                  <span className="text-[10px] font-mono text-zinc-500 truncate max-w-[120px]">
                     {record.observacoes || 'Sem observações'}
                   </span>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-1.5">
+                    {onDuplicateRecord && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onDuplicateRecord(record); }}
+                        className="inline-flex items-center space-x-1 px-2 py-1.5 bg-indigo-600 text-white font-black text-[10px] uppercase border border-zinc-900 active:scale-95 cursor-pointer"
+                        title="Duplicar esta comissão"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Duplicar</span>
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); onViewRecordDetail(record); }}
-                      className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-zinc-900 text-white font-black text-[10px] uppercase border border-zinc-900"
+                      className="inline-flex items-center space-x-1 px-2 py-1.5 bg-zinc-900 text-white font-black text-[10px] uppercase border border-zinc-900 cursor-pointer"
                     >
                       <Edit2 className="w-3 h-3" />
                       <span>Editar</span>
@@ -928,7 +941,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); onDeleteRecord(record.id); }}
-                      className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-rose-500 text-white font-black text-[10px] uppercase border border-zinc-900"
+                      className="inline-flex items-center space-x-1 px-2 py-1.5 bg-rose-500 text-white font-black text-[10px] uppercase border border-zinc-900 cursor-pointer"
                     >
                       <Trash2 className="w-3 h-3" />
                       <span>Excluir</span>
@@ -1145,9 +1158,19 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
                     {/* Actions */}
                     <td className="py-3 px-3 text-right">
                       <div className="flex items-center justify-end space-x-1">
+                        {onDuplicateRecord && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onDuplicateRecord(record); }}
+                            className="p-1.5 bg-indigo-100 border border-zinc-900 hover:bg-indigo-600 hover:text-white text-indigo-950 transition cursor-pointer"
+                            title="Duplicar comissão (divisão entre empresas)"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+
                         <button
                           onClick={(e) => { e.stopPropagation(); onViewRecordDetail(record); }}
-                          className="p-1.5 bg-zinc-100 border border-zinc-900 hover:bg-zinc-900 hover:text-white text-zinc-900 transition"
+                          className="p-1.5 bg-zinc-100 border border-zinc-900 hover:bg-zinc-900 hover:text-white text-zinc-900 transition cursor-pointer"
                           title="Ver / Editar detalhes"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
@@ -1155,7 +1178,7 @@ export const SpreadsheetTable: React.FC<SpreadsheetTableProps> = ({
 
                         <button
                           onClick={(e) => { e.stopPropagation(); onDeleteRecord(record.id); }}
-                          className="p-1.5 bg-rose-100 border border-zinc-900 hover:bg-rose-500 hover:text-white text-rose-950 transition"
+                          className="p-1.5 bg-rose-100 border border-zinc-900 hover:bg-rose-500 hover:text-white text-rose-950 transition cursor-pointer"
                           title="Excluir comissão"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

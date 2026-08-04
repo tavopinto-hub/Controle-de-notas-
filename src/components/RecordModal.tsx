@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, FileSpreadsheet, Calendar, DollarSign, CheckCircle2, Clock, FileText, AlertTriangle, Trash2, UserCheck, Users, Plus } from 'lucide-react';
+import { X, Save, FileSpreadsheet, Calendar, DollarSign, CheckCircle2, Clock, FileText, AlertTriangle, Trash2, UserCheck, Users, Plus, Copy } from 'lucide-react';
 import { CommissionRecord, StatusNF, StatusPagamento } from '../types';
 import { cleanClubeAndAtleta } from '../utils/athleteUtils';
 import { PREDEFINED_AGENTES, getAgenteColor } from '../constants/captadores';
@@ -11,6 +11,7 @@ interface RecordModalProps {
   allRecords?: CommissionRecord[];
   onSave: (record: CommissionRecord, propagateToAllMonths?: boolean) => void;
   onDelete?: (id: string) => void;
+  onDuplicate?: (record: CommissionRecord) => void;
 }
 
 export const RecordModal: React.FC<RecordModalProps> = ({
@@ -19,7 +20,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({
   record,
   allRecords = [],
   onSave,
-  onDelete
+  onDelete,
+  onDuplicate
 }) => {
   const [formData, setFormData] = useState<Partial<CommissionRecord>>({
     numeroContrato: '',
@@ -611,8 +613,8 @@ export const RecordModal: React.FC<RecordModalProps> = ({
           </div>
 
           {/* Footer Actions */}
-          <div className="pt-4 border-t-2 border-zinc-900 flex items-center justify-between gap-2">
-            <div>
+          <div className="pt-4 border-t-2 border-zinc-900 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-2">
               {record && onDelete && (
                 <button
                   type="button"
@@ -621,10 +623,24 @@ export const RecordModal: React.FC<RecordModalProps> = ({
                       onDelete(record.id);
                     }
                   }}
-                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-rose-500 hover:bg-rose-600 text-white font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5"
+                  className="inline-flex items-center space-x-1.5 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4 text-white" />
-                  <span>Excluir Registro</span>
+                  <span>Excluir</span>
+                </button>
+              )}
+
+              {record && onDuplicate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDuplicate(formData as CommissionRecord);
+                  }}
+                  className="inline-flex items-center space-x-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+                  title="Duplica este registro para divisão entre duas ou mais empresas"
+                >
+                  <Copy className="w-4 h-4 text-white" />
+                  <span>Duplicar Comissão</span>
                 </button>
               )}
             </div>
@@ -633,13 +649,13 @@ export const RecordModal: React.FC<RecordModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border-2 border-zinc-900 text-zinc-900 font-black uppercase text-xs tracking-wider hover:bg-zinc-200 transition"
+                className="px-4 py-2 border-2 border-zinc-900 text-zinc-900 font-black uppercase text-xs tracking-wider hover:bg-zinc-200 transition cursor-pointer"
               >
                 Cancelar
               </button>
               <button
                 type="submit"
-                className="inline-flex items-center space-x-2 px-5 py-2 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition"
+                className="inline-flex items-center space-x-2 px-5 py-2 bg-emerald-400 hover:bg-emerald-300 text-zinc-950 font-black uppercase text-xs tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition cursor-pointer"
               >
                 <Save className="w-4 h-4 text-zinc-950" />
                 <span>Salvar na Planilha</span>

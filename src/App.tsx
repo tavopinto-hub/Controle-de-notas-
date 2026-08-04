@@ -665,6 +665,32 @@ export default function App() {
     }
   };
 
+  const handleDuplicateRecord = (recordToDuplicate: CommissionRecord) => {
+    const newId = `rec-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const duplicatedRecord: CommissionRecord = {
+      ...recordToDuplicate,
+      id: newId,
+      numeroContrato: recordToDuplicate.numeroContrato ? `${recordToDuplicate.numeroContrato}-DUP` : `CT-${Date.now()}`,
+      observacoes: recordToDuplicate.observacoes 
+        ? `${recordToDuplicate.observacoes} (Duplicada)`
+        : 'Duplicada para divisão de empresas/comissão',
+      criadoEm: new Date().toISOString()
+    };
+
+    const updatedList = [duplicatedRecord, ...records];
+    setRecords(updatedList);
+    saveRecordToFirestore(duplicatedRecord).catch(err => console.warn('Firestore duplicate sync:', err));
+
+    if (sheetSettings.spreadsheetId) {
+      handleSyncToSheets(updatedList).catch(e => console.warn('Sync duplicate notice:', e));
+    }
+
+    showToast(`✨ Comissão de ${duplicatedRecord.clienteNome || duplicatedRecord.clube || 'contrato'} duplicada! Você pode ajustar a empresa/valor.`, 'success');
+
+    setSelectedRecord(duplicatedRecord);
+    setIsRecordModalOpen(true);
+  };
+
   const handleOpenEditRecord = (record: CommissionRecord) => {
     setSelectedRecord(record);
     setIsRecordModalOpen(true);
@@ -747,6 +773,7 @@ export default function App() {
               onTabChange={setDashboardTab}
               onUpdateRecord={handleUpdateRecord}
               onDeleteRecord={handleDeleteRecord}
+              onDuplicateRecord={handleDuplicateRecord}
               onAddNewRecord={handleOpenAddRecord}
               onOpenEmailModal={() => setIsEmailModalOpen(true)}
               onViewRecordDetail={handleOpenEditRecord}
@@ -829,6 +856,7 @@ export default function App() {
         allRecords={records}
         onSave={handleSaveRecordModal}
         onDelete={handleDeleteRecord}
+        onDuplicate={handleDuplicateRecord}
       />
 
       {/* Confirmation Modal for Deletion */}
