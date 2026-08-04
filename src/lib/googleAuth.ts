@@ -48,6 +48,14 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Google Sign-In error:', error);
+    if (error?.code === 'auth/unauthorized-domain' || error?.message?.includes('unauthorized-domain')) {
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'este domínio';
+      throw new Error(
+        `O domínio "${hostname}" não está cadastrado nos 'Domínios Autorizados' do seu Firebase.\n\n` +
+        `Opção 1 (Recomendada): Copie o código do Apps Script (botão azul na janela do Sheets) e cole o link Web App. Ele sincroniza sua planilha diretamente sem precisar de autorização no Firebase!\n\n` +
+        `Opção 2: Acesse o Console do Firebase -> Authentication -> Configurações -> Domínios autorizados e adicione: ${hostname}`
+      );
+    }
     throw error;
   } finally {
     isSigningIn = false;

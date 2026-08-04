@@ -379,7 +379,7 @@ function doPost(e) {
               ) : (
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
               )}
-              <span>{statusMsg.text}</span>
+              <span className="whitespace-pre-line">{statusMsg.text}</span>
             </div>
           )}
 

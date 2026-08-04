@@ -221,7 +221,7 @@ export const SyncView: React.FC<SyncViewProps> = ({
               : 'bg-amber-400 text-zinc-950'
           }`}>
             {statusMsg.type === 'success' ? <CheckCircle2 className="w-5 h-5 flex-shrink-0" /> : <AlertCircle className="w-5 h-5 flex-shrink-0" />}
-            <span>{statusMsg.text}</span>
+            <span className="whitespace-pre-line">{statusMsg.text}</span>
           </div>
         )}
       </div>
