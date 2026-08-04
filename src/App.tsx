@@ -81,10 +81,10 @@ export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionR
   const result: CommissionRecord[] = [];
 
   for (const rec of recordsList) {
-    if (!rec) continue;
+    if (!rec || !rec.id) continue;
 
     // 1. Skip exact duplicate IDs
-    if (rec.id && seenIds.has(rec.id)) {
+    if (seenIds.has(rec.id)) {
       continue;
     }
 
@@ -99,47 +99,24 @@ export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionR
     const parcStr = `${parcCurr}/${parcTot}`;
     const tipoKey = (rec.tipoContrato || '').toLowerCase().trim();
     const agentesKey = (rec.captadores || rec.agentes || []).slice().sort().join(',').toLowerCase();
+    const statusNfKey = (rec.statusNF || '').toLowerCase().trim();
+    const statusPagKey = (rec.statusPagamento || '').toLowerCase().trim();
+    const obsKey = (rec.observacoes || '').toLowerCase().trim();
 
     let ct = (rec.numeroContrato || '').split('(')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
     if (ct.includes('mbs') || ct.includes('sem')) ct = '';
 
     const contractDisc = ct ? `ct:${ct}` : (clienteKey ? `cli:${clienteKey}` : '');
 
-    // Key A: Athlete + Club + Contract + Type + Agents + Installment String (e.g. "palmeiras_marlonfreitas_ct:ct100b_imagem_p6/32")
-    const keyAthleteParcStr = (athleteKey && athleteKey.length >= 3)
-      ? `ath_ps:${clubKey}_${athleteKey}_${contractDisc}_${tipoKey}_${agentesKey}_p${parcStr}`
-      : null;
+    // Fully detailed composite key that preserves duplicates created for different companies, types, agents, status, or values
+    const fullUniqueKey = `key:${rec.id}:${contractDisc}:${athleteKey}:${clubKey}:${tipoKey}:${agentesKey}:${parcStr}:${monthISO}:${valor}:${statusNfKey}:${statusPagKey}:${obsKey}`;
 
-    // Key B: Athlete + Club + Contract + Type + Agents + Month + Installment Number
-    const keyAthleteMonthParc = (athleteKey && athleteKey.length >= 3 && monthISO)
-      ? `ath_mp:${clubKey}_${athleteKey}_${contractDisc}_${tipoKey}_${agentesKey}_${monthISO}_p${parcCurr}`
-      : null;
-
-    // Key C: Athlete + Club + Type + Contract + Due Date + Amount
-    const keyAthleteVencVal = (athleteKey && athleteKey.length >= 3 && vencISO)
-      ? `ath_vv:${clubKey}_${athleteKey}_${contractDisc}_${tipoKey}_${vencISO}_${valor}`
-      : null;
-
-    // Key D: Contract Number + Type + Installment
-    const keyContractParc = (ct && ct.length >= 3)
-      ? `ct_p:${ct}_${tipoKey}_p${parcStr}`
-      : null;
-
-    if (
-      (keyAthleteParcStr && seenKeys.has(keyAthleteParcStr)) ||
-      (keyAthleteMonthParc && seenKeys.has(keyAthleteMonthParc)) ||
-      (keyAthleteVencVal && seenKeys.has(keyAthleteVencVal)) ||
-      (keyContractParc && seenKeys.has(keyContractParc))
-    ) {
-      continue; // Skip actual duplicate record
+    if (seenKeys.has(fullUniqueKey)) {
+      continue; // Skip exact clone
     }
 
-    if (rec.id) seenIds.add(rec.id);
-    if (keyAthleteParcStr) seenKeys.add(keyAthleteParcStr);
-    if (keyAthleteMonthParc) seenKeys.add(keyAthleteMonthParc);
-    if (keyAthleteVencVal) seenKeys.add(keyAthleteVencVal);
-    if (keyContractParc) seenKeys.add(keyContractParc);
-
+    seenIds.add(rec.id);
+    seenKeys.add(fullUniqueKey);
     result.push(rec);
   }
 
@@ -620,6 +597,7 @@ export default function App() {
       updatedList = updatedRecords;
     }
     setRecords(updatedList);
+    saveRecordToFirestore(updatedRecord).catch(err => console.warn('Firestore single record update sync:', err));
     saveBatchRecordsToFirestore(updatedList).catch(err => console.warn('Firestore update sync:', err));
     showToast(`Comissão de ${updatedRecord.clienteNome || updatedRecord.clube || updatedRecord.atleta} atualizada.`);
     if (sheetSettings.spreadsheetId) {
