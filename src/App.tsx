@@ -14,6 +14,7 @@ import { EmailModal } from './components/EmailModal';
 import { GoogleSheetsModal } from './components/GoogleSheetsModal';
 import { NotificationCenter } from './components/NotificationCenter';
 import { RecordModal } from './components/RecordModal';
+import { DuplicateModal, DuplicateOptions } from './components/DuplicateModal';
 import { initialRecords } from './data/initialRecords';
 import { CommissionRecord, ContractAnalysisResult, AppNotification, EmailSettings, GoogleSheetSettings } from './types';
 import { Sparkles, CheckCircle2, AlertTriangle, FileSpreadsheet, ExternalLink, RefreshCw, Trash2, LayoutDashboard, FileText } from 'lucide-react';
@@ -95,28 +96,30 @@ export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionR
     const parcCurr = rec.parcelaAtual || 1;
     const parcTot = rec.totalParcelas || 1;
     const parcStr = `${parcCurr}/${parcTot}`;
+    const tipoKey = (rec.tipoContrato || '').toLowerCase().trim();
+    const agentesKey = (rec.captadores || rec.agentes || []).slice().sort().join(',').toLowerCase();
 
     let ct = (rec.numeroContrato || '').split('(')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
     if (ct.includes('mbs') || ct.includes('sem')) ct = '';
 
-    // Key A: Athlete + Club + Installment String (e.g. "palmeiras_marlonfreitas_p6/32")
+    // Key A: Athlete + Club + Type + Agents + Installment String (e.g. "palmeiras_marlonfreitas_imagem_p6/32")
     const keyAthleteParcStr = (athleteKey && athleteKey.length >= 3)
-      ? `ath_ps:${clubKey}_${athleteKey}_p${parcStr}`
+      ? `ath_ps:${clubKey}_${athleteKey}_${tipoKey}_${agentesKey}_p${parcStr}`
       : null;
 
-    // Key B: Athlete + Club + Month + Installment Number (e.g. "palmeiras_marlonfreitas_2026-07_p6")
+    // Key B: Athlete + Club + Type + Agents + Month + Installment Number
     const keyAthleteMonthParc = (athleteKey && athleteKey.length >= 3 && monthISO)
-      ? `ath_mp:${clubKey}_${athleteKey}_${monthISO}_p${parcCurr}`
+      ? `ath_mp:${clubKey}_${athleteKey}_${tipoKey}_${agentesKey}_${monthISO}_p${parcCurr}`
       : null;
 
-    // Key C: Athlete + Club + Due Date + Amount (e.g. "palmeiras_marlonfreitas_2026-07-25_62625")
+    // Key C: Athlete + Club + Type + Contract + Due Date + Amount
     const keyAthleteVencVal = (athleteKey && athleteKey.length >= 3 && vencISO)
-      ? `ath_vv:${clubKey}_${athleteKey}_${vencISO}_${valor}`
+      ? `ath_vv:${clubKey}_${athleteKey}_${tipoKey}_${ct}_${vencISO}_${valor}`
       : null;
 
-    // Key D: Contract Number + Installment
+    // Key D: Contract Number + Type + Installment
     const keyContractParc = (ct && ct.length >= 3)
-      ? `ct_p:${ct}_p${parcStr}`
+      ? `ct_p:${ct}_${tipoKey}_p${parcStr}`
       : null;
 
     if (
@@ -244,6 +247,8 @@ export default function App() {
   const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isRecordModalOpen, setIsRecordModalOpen] = useState(false);
+  const [isDuplicateModalOpen, setIsDuplicateModalOpen] = useState(false);
+  const [duplicateRecordTarget, setDuplicateRecordTarget] = useState<CommissionRecord | null>(null);
   const [selectedRecord, setSelectedRecord] = useState<CommissionRecord | null>(null);
   const [recordToDelete, setRecordToDelete] = useState<CommissionRecord | null>(null);
   const [isSheetsSyncing, setIsSheetsSyncing] = useState(false);
@@ -666,29 +671,70 @@ export default function App() {
   };
 
   const handleDuplicateRecord = (recordToDuplicate: CommissionRecord) => {
-    const newId = `rec-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-    const duplicatedRecord: CommissionRecord = {
-      ...recordToDuplicate,
-      id: newId,
-      numeroContrato: recordToDuplicate.numeroContrato ? `${recordToDuplicate.numeroContrato}-DUP` : `CT-${Date.now()}`,
-      observacoes: recordToDuplicate.observacoes 
-        ? `${recordToDuplicate.observacoes} (Duplicada)`
-        : 'Duplicada para divisão de empresas/comissão',
-      criadoEm: new Date().toISOString()
-    };
+    setIsRecordModalOpen(false);
+    setDuplicateRecordTarget(recordToDuplicate);
+    setIsDuplicateModalOpen(true);
+  };
 
-    const updatedList = [duplicatedRecord, ...records];
-    setRecords(updatedList);
-    saveRecordToFirestore(duplicatedRecord).catch(err => console.warn('Firestore duplicate sync:', err));
+  const handleConfirmDuplicateOptions = (options: DuplicateOptions) => {
+    if (!duplicateRecordTarget) return;
 
-    if (sheetSettings.spreadsheetId) {
-      handleSyncToSheets(updatedList).catch(e => console.warn('Sync duplicate notice:', e));
+    let targetInstallments: CommissionRecord[] = [];
+    if (options.duplicateAllInstallments && duplicateRecordTarget.numeroContrato) {
+      const matching = records.filter(r => 
+        (r.numeroContrato && r.numeroContrato === duplicateRecordTarget.numeroContrato) ||
+        (r.atleta && r.atleta === duplicateRecordTarget.atleta && r.totalParcelas === duplicateRecordTarget.totalParcelas && r.totalParcelas && r.totalParcelas > 1)
+      );
+      targetInstallments = matching.length > 0 ? matching : [duplicateRecordTarget];
+    } else {
+      targetInstallments = [duplicateRecordTarget];
     }
 
-    showToast(`✨ Comissão de ${duplicatedRecord.clienteNome || duplicatedRecord.clube || 'contrato'} duplicada! Você pode ajustar a empresa/valor.`, 'success');
+    const suffix = options.contractSuffix || '-B';
 
-    setSelectedRecord(duplicatedRecord);
-    setIsRecordModalOpen(true);
+    const newDuplicatedRecords: CommissionRecord[] = targetInstallments.map((item, index) => {
+      const newId = `rec-${Date.now()}-${index}-${Math.floor(Math.random() * 10000)}`;
+      
+      let calculatedValue = item.valorComissao;
+      if (options.valueMode === 'split50') {
+        calculatedValue = item.valorComissao / 2;
+      } else if (options.valueMode === 'custom') {
+        calculatedValue = options.customValue || item.valorComissao;
+      }
+
+      const baseContract = item.numeroContrato || 'CT-2026/001';
+      const newContractNum = baseContract.includes(suffix) ? baseContract : `${baseContract}${suffix}`;
+
+      const newAgentesList = options.newAgentes.length > 0 ? options.newAgentes : (item.captadores || item.agentes || []);
+
+      return {
+        ...item,
+        id: newId,
+        numeroContrato: newContractNum,
+        tipoContrato: options.newTipoContrato || item.tipoContrato || 'Intermediação Comercial',
+        clienteNome: options.newClienteNome || item.clienteNome,
+        clube: options.newClube || item.clube || options.newClienteNome || item.clienteNome,
+        captadores: newAgentesList,
+        agentes: newAgentesList,
+        valorComissao: calculatedValue,
+        observacoes: item.observacoes 
+          ? `${item.observacoes} (Duplicado - ${options.newTipoContrato})`
+          : `Duplicado - ${options.newTipoContrato}`,
+        criadoEm: new Date().toISOString()
+      };
+    });
+
+    const updatedList = deduplicateRecords([...newDuplicatedRecords, ...records]);
+    setRecords(updatedList);
+    saveBatchRecordsToFirestore(newDuplicatedRecords).catch(err => console.warn('Firestore duplicate batch sync:', err));
+
+    if (sheetSettings.spreadsheetId) {
+      handleSyncToSheets(updatedList).catch(e => console.warn('Sync duplicate batch notice:', e));
+    }
+
+    showToast(`✨ ${newDuplicatedRecords.length} comissão(ões) duplicada(s) com sucesso para ${options.newTipoContrato}!`, 'success');
+    setIsDuplicateModalOpen(false);
+    setDuplicateRecordTarget(null);
   };
 
   const handleOpenEditRecord = (record: CommissionRecord) => {
@@ -857,6 +903,14 @@ export default function App() {
         onSave={handleSaveRecordModal}
         onDelete={handleDeleteRecord}
         onDuplicate={handleDuplicateRecord}
+      />
+
+      <DuplicateModal
+        isOpen={isDuplicateModalOpen}
+        record={duplicateRecordTarget}
+        allRecords={records}
+        onClose={() => setIsDuplicateModalOpen(false)}
+        onConfirm={handleConfirmDuplicateOptions}
       />
 
       {/* Confirmation Modal for Deletion */}
