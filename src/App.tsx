@@ -90,6 +90,7 @@ export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionR
 
     const athleteKey = getNormalizedAthleteKey(rec);
     const clubKey = getNormalizedClubKey(rec);
+    const clienteKey = (rec.clienteNome || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '').trim();
     const vencISO = normalizeDateISO(rec.dataVencimentoNF);
     const monthISO = vencISO.substring(0, 7); // e.g. "2026-07"
     const valor = Math.round((rec.valorComissao || 0) * 100) / 100;
@@ -102,19 +103,21 @@ export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionR
     let ct = (rec.numeroContrato || '').split('(')[0].toLowerCase().replace(/[^a-z0-9]/g, '');
     if (ct.includes('mbs') || ct.includes('sem')) ct = '';
 
-    // Key A: Athlete + Club + Type + Agents + Installment String (e.g. "palmeiras_marlonfreitas_imagem_p6/32")
+    const contractDisc = ct ? `ct:${ct}` : (clienteKey ? `cli:${clienteKey}` : '');
+
+    // Key A: Athlete + Club + Contract + Type + Agents + Installment String (e.g. "palmeiras_marlonfreitas_ct:ct100b_imagem_p6/32")
     const keyAthleteParcStr = (athleteKey && athleteKey.length >= 3)
-      ? `ath_ps:${clubKey}_${athleteKey}_${tipoKey}_${agentesKey}_p${parcStr}`
+      ? `ath_ps:${clubKey}_${athleteKey}_${contractDisc}_${tipoKey}_${agentesKey}_p${parcStr}`
       : null;
 
-    // Key B: Athlete + Club + Type + Agents + Month + Installment Number
+    // Key B: Athlete + Club + Contract + Type + Agents + Month + Installment Number
     const keyAthleteMonthParc = (athleteKey && athleteKey.length >= 3 && monthISO)
-      ? `ath_mp:${clubKey}_${athleteKey}_${tipoKey}_${agentesKey}_${monthISO}_p${parcCurr}`
+      ? `ath_mp:${clubKey}_${athleteKey}_${contractDisc}_${tipoKey}_${agentesKey}_${monthISO}_p${parcCurr}`
       : null;
 
     // Key C: Athlete + Club + Type + Contract + Due Date + Amount
     const keyAthleteVencVal = (athleteKey && athleteKey.length >= 3 && vencISO)
-      ? `ath_vv:${clubKey}_${athleteKey}_${tipoKey}_${ct}_${vencISO}_${valor}`
+      ? `ath_vv:${clubKey}_${athleteKey}_${contractDisc}_${tipoKey}_${vencISO}_${valor}`
       : null;
 
     // Key D: Contract Number + Type + Installment
@@ -128,7 +131,7 @@ export const deduplicateRecords = (recordsList: CommissionRecord[]): CommissionR
       (keyAthleteVencVal && seenKeys.has(keyAthleteVencVal)) ||
       (keyContractParc && seenKeys.has(keyContractParc))
     ) {
-      continue; // Skip duplicate record
+      continue; // Skip actual duplicate record
     }
 
     if (rec.id) seenIds.add(rec.id);

@@ -172,26 +172,42 @@ export function propagateAthleteInfoToAllRecords(
 
   let updatedCount = 0;
   const targetAgentes = updatedRecord.agentes || updatedRecord.captadores || [];
+  const targetContract = (updatedRecord.numeroContrato || '').trim().toLowerCase();
 
   const updatedRecords = allRecords.map(rec => {
     // Check if this record belongs to the same athlete
     const currentKey = getAthleteNormalizedKey(rec.atleta);
     if (currentKey === targetKey) {
-      updatedCount++;
-      return {
-        ...rec,
-        // Propagate common athlete metadata across all months
-        agentes: targetAgentes.length > 0 ? targetAgentes : rec.agentes,
-        captadores: targetAgentes.length > 0 ? targetAgentes : rec.captadores,
-        clube: updatedRecord.clube && updatedRecord.clube !== '-' ? updatedRecord.clube : rec.clube,
-        clienteNome: updatedRecord.clube && updatedRecord.clube !== '-' ? updatedRecord.clube : rec.clienteNome,
-        tipoContrato: updatedRecord.tipoContrato || rec.tipoContrato,
-        clienteCnpjCpf: updatedRecord.clienteCnpjCpf || rec.clienteCnpjCpf,
-        observacoes: updatedRecord.observacoes || rec.observacoes,
-        percentualComissao: updatedRecord.percentualComissao !== undefined && updatedRecord.percentualComissao > 0 
-          ? updatedRecord.percentualComissao 
-          : rec.percentualComissao
-      };
+      const recContract = (rec.numeroContrato || '').trim().toLowerCase();
+      
+      // If records belong to the EXACT same contract number, or if both have no contract number, propagate full contract details
+      const isSameContract = (targetContract && recContract && targetContract === recContract) ||
+        (!targetContract && !recContract && rec.tipoContrato === updatedRecord.tipoContrato) ||
+        (rec.id === updatedRecord.id);
+
+      if (isSameContract) {
+        updatedCount++;
+        return {
+          ...rec,
+          agentes: targetAgentes.length > 0 ? targetAgentes : rec.agentes,
+          captadores: targetAgentes.length > 0 ? targetAgentes : rec.captadores,
+          clube: updatedRecord.clube && updatedRecord.clube !== '-' ? updatedRecord.clube : rec.clube,
+          clienteNome: updatedRecord.clube && updatedRecord.clube !== '-' ? updatedRecord.clube : rec.clienteNome,
+          tipoContrato: updatedRecord.tipoContrato || rec.tipoContrato,
+          clienteCnpjCpf: updatedRecord.clienteCnpjCpf || rec.clienteCnpjCpf,
+          percentualComissao: updatedRecord.percentualComissao !== undefined && updatedRecord.percentualComissao > 0 
+            ? updatedRecord.percentualComissao 
+            : rec.percentualComissao
+        };
+      } else {
+        // Different contract for the same athlete: only update general club / CNPJ if provided, DO NOT overwrite agentes, tipoContrato or contract numbers!
+        return {
+          ...rec,
+          clube: updatedRecord.clube && updatedRecord.clube !== '-' ? updatedRecord.clube : rec.clube,
+          clienteNome: updatedRecord.clube && updatedRecord.clube !== '-' ? updatedRecord.clube : rec.clienteNome,
+          clienteCnpjCpf: updatedRecord.clienteCnpjCpf || rec.clienteCnpjCpf
+        };
+      }
     }
     return rec;
   });
@@ -203,14 +219,10 @@ export function propagateAthleteInfoToAllRecords(
  * Propagates and synchronizes metadata for ALL athletes across all months in the spreadsheet.
  */
 export function propagateAllAthletesAcrossAllRecords(allRecords: CommissionRecord[]): { updatedRecords: CommissionRecord[]; totalSynced: number } {
-  // Map normalized athlete key -> latest/most complete metadata
+  // Map normalized athlete key -> latest club and CNPJ metadata ONLY
   const athleteMap = new Map<string, {
-    agentes: string[];
     clube: string;
-    tipoContrato: string;
     clienteCnpjCpf: string;
-    observacoes: string;
-    percentualComissao: number;
   }>();
 
   for (const rec of allRecords) {
@@ -218,27 +230,15 @@ export function propagateAllAthletesAcrossAllRecords(allRecords: CommissionRecor
     if (!key || key.length < 2) continue;
 
     const existing = athleteMap.get(key);
-    const currAgentes = rec.agentes || rec.captadores || [];
-
     if (!existing) {
       athleteMap.set(key, {
-        agentes: currAgentes,
         clube: rec.clube || rec.clienteNome || '',
-        tipoContrato: rec.tipoContrato || '',
-        clienteCnpjCpf: rec.clienteCnpjCpf || '',
-        observacoes: rec.observacoes || '',
-        percentualComissao: rec.percentualComissao || 10
+        clienteCnpjCpf: rec.clienteCnpjCpf || ''
       });
     } else {
-      // Merge agentes list
-      const combinedAgentes = Array.from(new Set([...existing.agentes, ...currAgentes]));
       athleteMap.set(key, {
-        agentes: combinedAgentes.length > 0 ? combinedAgentes : existing.agentes,
         clube: (rec.clube && rec.clube !== '-') ? rec.clube : existing.clube,
-        tipoContrato: rec.tipoContrato || existing.tipoContrato,
-        clienteCnpjCpf: rec.clienteCnpjCpf || existing.clienteCnpjCpf,
-        observacoes: rec.observacoes || existing.observacoes,
-        percentualComissao: rec.percentualComissao || existing.percentualComissao
+        clienteCnpjCpf: rec.clienteCnpjCpf || existing.clienteCnpjCpf
       });
     }
   }
@@ -249,19 +249,12 @@ export function propagateAllAthletesAcrossAllRecords(allRecords: CommissionRecor
     if (!key || !athleteMap.has(key)) return rec;
 
     const meta = athleteMap.get(key)!;
-    const agentesList = meta.agentes.length > 0 ? meta.agentes : (rec.agentes || rec.captadores || []);
-
     totalSynced++;
     return {
       ...rec,
-      agentes: agentesList,
-      captadores: agentesList,
       clube: meta.clube || rec.clube,
       clienteNome: meta.clube || rec.clienteNome,
-      tipoContrato: meta.tipoContrato || rec.tipoContrato,
-      clienteCnpjCpf: meta.clienteCnpjCpf || rec.clienteCnpjCpf,
-      observacoes: meta.observacoes || rec.observacoes,
-      percentualComissao: meta.percentualComissao || rec.percentualComissao
+      clienteCnpjCpf: meta.clienteCnpjCpf || rec.clienteCnpjCpf
     };
   });
 
