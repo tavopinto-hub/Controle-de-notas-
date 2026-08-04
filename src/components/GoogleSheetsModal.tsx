@@ -254,24 +254,41 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const scriptCode = `function doPost(e) {
+                  const scriptCode = `function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({ status: "success", message: "Integração MMB Sports Ativa!" }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
   try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "error",
+        message: "Não clique no botão 'Executar' no editor do Apps Script. O script responde automaticamente quando o app envia dados."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
     var data = JSON.parse(e.postData.contents);
+    
     if (data.rows && data.rows.length > 0) {
-      if (sheet.getLastRow() === 0 && data.headers) {
+      var lastRow = sheet.getLastRow();
+      var lastCol = sheet.getLastColumn();
+      
+      if (lastRow === 0 && data.headers) {
         sheet.appendRow(data.headers);
-      } else if (sheet.getLastRow() > 1) {
-        sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+      } else if (lastRow > 1 && lastCol > 0) {
+        sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
       }
+      
       data.rows.forEach(function(row) {
         sheet.appendRow(row);
       });
     }
-    return ContentService.createTextOutput(JSON.stringify({status: "success"}))
+    return ContentService.createTextOutput(JSON.stringify({ status: "success", count: data.rows ? data.rows.length : 0 }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({status: "error", message: err.toString()}))
+    return ContentService.createTextOutput(JSON.stringify({ status: "error", message: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }`;
@@ -293,13 +310,16 @@ export const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({
             />
             
             <div className="text-[11px] font-bold text-zinc-600 space-y-1">
-              <p className="text-zinc-900 uppercase">como ativar a atualização automatica na sua planilha:</p>
+              <p className="text-zinc-900 uppercase">Passo a passo sem erro para implantar no Apps Script:</p>
               <ol className="list-decimal list-inside space-y-0.5 font-normal text-zinc-700">
-                <li>Na sua planilha do Google, acesse <strong className="font-black text-zinc-900">Extensões &gt; Apps Script</strong></li>
-                <li>Clique em <strong>Copiar Código</strong> acima e cole no editor do Google</li>
-                <li>Clique em <strong>Implantar &gt; Nova implantação &gt; App da Web</strong></li>
-                <li>Quem pode acessar: selecione <strong className="font-black text-zinc-900">Qualquer Pessoa (Anyone)</strong></li>
-                <li>Copie o link gerado e cole no campo acima. Pronto! Cada inclusão alimentará o Google Sheets na hora.</li>
+                <li>Na sua planilha no Google Sheets, acesse <strong className="font-black text-zinc-900">Extensões &gt; Apps Script</strong></li>
+                <li>Apague tudo que estiver no arquivo e cole o código copiado pelo botão acima.</li>
+                <li><strong className="text-rose-600 font-black">ATENÇÃO:</strong> Não clique no botão "Executar" no editor (ele dará erro por falta de dados).</li>
+                <li>No canto superior direito, clique em <strong className="font-black text-zinc-900">Implantar &gt; Nova implantação</strong></li>
+                <li>Selecione o tipo <strong className="font-black text-zinc-900">App da Web</strong></li>
+                <li>Em "Executar como": selecione <strong className="font-black text-zinc-900">Eu (seu e-mail)</strong></li>
+                <li>Em "Quem pode acessar": selecione <strong className="font-black text-zinc-900">Qualquer pessoa (Anyone)</strong></li>
+                <li>Clique em <strong className="font-black text-zinc-900">Implantar</strong>, autorize as permissões da sua conta e copie a URL do Web App gerada.</li>
               </ol>
             </div>
           </div>
